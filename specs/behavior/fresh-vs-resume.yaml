@@ -1,0 +1,94 @@
+name: behavior — fresh vs resume startup
+description: |
+  Behavioral coverage for the chat-startup contract:
+    - bare `mod8` opens a NEW session (matches ChatGPT-style "open = new")
+    - `mod8 resume` (no id) brings the most recent session back
+    - `mod8 resume <id>` targets a specific session
+  These tests assert on what the user OBSERVES (the "resuming session …" line
+  printed before Ink starts) for each combination of stored state + command.
+
+tests:
+  - name: prior sessions exist, but bare `mod8` does NOT resume
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-prev.json <<JSON
+          {
+            "version": 1,
+            "id": "2026-05-07-prev",
+            "title": "old chat",
+            "createdAt": 1715000000000,
+            "lastActivity": 1715000000000,
+            "messages": [
+              {"role": "user", "content": "remember the codeword fuchsia", "mode": "host"},
+              {"role": "assistant", "content": "got it.", "mode": "host"}
+            ]
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-prev.json
+    repl:
+      run: mod8
+      timeout_ms: 5000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stdout_omits:
+        - "resuming session"
+        - "fuchsia"
+        - "old chat"
+
+  - name: bare `mod8` shows the welcome banner
+    requires_api_key: true
+    repl:
+      run: mod8
+      timeout_ms: 5000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stdout_contains:
+        - "switch to claude"
+        - "use any provider"
+
+  - name: '`mod8 resume` (no id) prints "resuming session …" with the right id'
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-rsme.json <<JSON
+          {
+            "version": 1,
+            "id": "2026-05-07-rsme",
+            "title": "recent",
+            "createdAt": 1715000000000,
+            "lastActivity": 1715000000000,
+            "messages": [
+              {"role": "user", "content": "x", "mode": "host"},
+              {"role": "assistant", "content": "y", "mode": "host"}
+            ]
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-rsme.json
+    repl:
+      run: mod8 resume
+      timeout_ms: 5000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stdout_contains: "resuming session 2026-05-07-rsme"
+
+  - name: '`mod8 resume` with no sessions errors clearly'
+    repl:
+      run: mod8 resume
+      timeout_ms: 5000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stderr_contains:
+        - "no sessions to resume"
+        - "mod8 list"
+      exit_code: 1

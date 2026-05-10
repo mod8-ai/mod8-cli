@@ -1,0 +1,109 @@
+name: behavior — work-mode model stays in character
+description: |
+  Drilling deeper into work-mode discipline.  When the user is in work
+  mode, the worker model should:
+    - Identify as itself (claude / codex / etc), NOT as mod8
+    - Just do the work, NOT lecture about provider config
+    - Defer meta questions about mod8 back to host with <SWITCH_TO_HOST>
+    - Stay engaged for follow-ups, not bounce on every turn
+
+tests:
+  - name: work — "what is mod8?" defers, doesn't impersonate
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:work-ask anthropic "what is mod8?"'
+    expect:
+      stdout_omits:
+        - "I am mod8"
+        - "I'm mod8"
+        - "mod8 is a"
+      # Should hand back, mention host, or say "ask mod8"
+      stdout_matches: "(?i)(host|mod8|/mod8|handing back)"
+
+  - name: work — "how do I add a new provider?" is deferred to host
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:work-ask anthropic "how do I add a new provider to mod8?"'
+    expect:
+      # Deferral signals: hand-off phrasing OR pointing the user back to host.
+      stdout_matches: "(?i)(handing back|hand.+back|host|/mod8|mod8 question|ask mod8|that.+for mod8)"
+      stdout_omits:
+        - "Run `mod8 add-provider`"
+        - "use mod8 add-provider"
+
+  - name: work — coding task is answered fully, no hand-off
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:work-ask anthropic "give me a one-line javascript array reverse"'
+    expect:
+      stdout_matches: "(?i)(reverse|slice\\(\\)\\.reverse)"
+      stdout_omits:
+        - "<SWITCH_TO_HOST>"
+        - "handing back"
+        - "mod8 question"
+
+  - name: work — "who are you" answers as the worker, not mod8
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:work-ask anthropic "who are you exactly?"'
+    expect:
+      stdout_matches: "(?i)claude"
+      stdout_omits:
+        - "I am mod8"
+        - "I'm mod8"

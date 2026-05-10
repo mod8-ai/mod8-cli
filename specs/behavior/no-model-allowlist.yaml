@@ -1,0 +1,80 @@
+name: behavior — no model allowlist; Google's response is what mod8 surfaces
+description: |
+  The user reported "mod8 is rejecting gemini-2.5-flash without ever calling
+  Google."  Forensics: there's no allowlist; the symptom was misclassified
+  errors making it LOOK like rejection.  These specs lock in the no-allowlist
+  contract:
+
+    1. dev:resolve-model produces whatever the user wrote, no scrubbing
+    2. With debug logging on, the SDK URL for a fake model name shows it
+       reached the network — proving mod8 didn't pre-reject
+    3. The provider's own response (whatever it is) is what mod8 surfaces
+       in errors — never replaced with a generic "model not available"
+
+tests:
+  - name: 'unknown-but-user-supplied model passes through dev:resolve-model'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {
+              "apiKey": "x",
+              "apiType": "gemini",
+              "name": "Google (Gemini)",
+              "defaultModel": "definitely-not-a-real-model-yet",
+              "color": "#06B6D4"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve-model google'
+    expect:
+      stdout_contains:
+        - 'model="definitely-not-a-real-model-yet"'
+      stdout_omits:
+        # NEVER swap to a built-in default.
+        - 'gemini-2.0-flash'
+        - 'gemini-1'
+
+  - name: 'unknown model name reaches the Google SDK URL (proven without network)'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {
+              "apiKey": "AIzaSy-FAKE-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAAA",
+              "apiType": "gemini",
+              "name": "Google (Gemini)",
+              "defaultModel": "definitely-not-a-real-model-yet",
+              "color": "#06B6D4"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    # dev:debug-call runs the SAME resolution + URL-construction logic as
+    # the real provider call, just without making the network request.
+    # If mod8 had an allowlist, the model name would be swapped here too.
+    shell: 'mod8 dev:debug-call google'
+    expect:
+      stdout_contains:
+        - 'model="definitely-not-a-real-model-yet"'
+        - 'models/definitely-not-a-real-model-yet:streamGenerateContent'
+      stdout_omits:
+        # NEVER swap the user's model.
+        - 'gemini-2.0-flash'
+        # Old misclassification language must not appear.
+        - 'model not available'
+
+  - name: 'classifyError no longer over-matches "models/<name>" in URLs'
+    # The exact regression: SDK URL "models/X" + "API key not valid" was
+    # matching the model-not-available regex.  Now classified as auth.
+    shell: |
+      mod8 dev:explain-error google "[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent: [400 Bad Request] API key not valid. Please pass a valid API key."
+    expect:
+      stdout_contains:
+        - 'kind=auth'
+      stdout_omits:
+        - 'kind=model'
+        - 'set MOD8_GOOGLE_MODEL to override'

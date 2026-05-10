@@ -1,0 +1,160 @@
+name: behavior — per-kind structured error diagnosis
+description: |
+  Bug: when a provider returned a SPECIFIC error ("[403] project denied
+  access"), mod8 dropped the message and showed a generic provider hint
+  ("free-tier quota / billing / regions") that didn't match what was wrong.
+
+  Fix: every error is now diagnosed by KIND (auth / forbidden / rate-limit /
+  no-credit / server / network / timeout / model / other).  The user-facing
+  output:
+    short        — single line: "<provider> <verb> (HTTP <code>): '<raw>'"
+    long         — multi-line explanation + provider-specific fix bullets
+    suggestion   — short tip used by the warn / auto-fallback banners,
+                    customized per kind ("paste a new key" for auth,
+                    "switch back, project-level block" for forbidden, etc.)
+
+  These specs feed synthetic errors through `mod8 dev:explain-error` and
+  assert the diagnosis pipeline produces the right kind + content.
+
+tests:
+  - name: '403 denied → kind=forbidden, quotes raw, suggests project-level fix (NOT generic billing)'
+    shell: |
+      mod8 dev:explain-error google "[403 Forbidden] Your project has been denied access. Please contact support."
+    expect:
+      stdout_contains:
+        - 'kind=forbidden'
+        - 'google rejected the request (HTTP 403)'
+        - "'Your project has been denied access. Please contact support.'"
+        - 'project-level block'
+        - 'Switch back to mod8'
+        - 'project / account level'
+        - 'Wait 24h for auto-review'
+      stdout_omits:
+        # The generic Google quota-latency hint must NOT show up — that's
+        # the regression we're fixing.
+        - 'free-tier quota'
+        - '10 min after creating a key'
+
+  - name: '401 invalid key → kind=auth, suggests paste-a-new-key inline'
+    shell: |
+      mod8 dev:explain-error openai "401 Unauthorized: invalid_api_key"
+    expect:
+      stdout_contains:
+        - 'kind=auth'
+        - 'openai rejected the API key (HTTP 401)'
+        - 'invalid_api_key'
+        # Specific OpenAI-vs-ChatGPT-subscription nuance is included.
+        - 'ChatGPT subscription is NOT an OpenAI API key'
+        - 'paste a new key'
+        # Suggestion routes the user toward replacing the key, not retrying.
+        - 'paste a new key to replace this one'
+
+  - name: '429 with retry-after extracts the delay'
+    shell: |
+      mod8 dev:explain-error anthropic "rate_limit_exceeded: please retry after 30 seconds"
+    expect:
+      stdout_contains:
+        - 'kind=rate-limit'
+        - 'anthropic rate-limited'
+        - 'retry in 30s'
+        # The suggestion echoes the SAME delay the provider gave us.
+        - 'wait 30s and retry'
+
+  - name: '429 without retry-after still works (no fake delay invented)'
+    shell: |
+      mod8 dev:explain-error openai "429 Too Many Requests"
+    expect:
+      stdout_contains:
+        - 'kind=rate-limit'
+        - 'openai rate-limited'
+        - 'wait a few seconds and retry'
+      stdout_omits:
+        - 'retry in 0s'
+        - 'wait 0s'
+
+  - name: '402 / insufficient_balance → kind=no-credit + provider billing URL'
+    shell: |
+      mod8 dev:explain-error deepseek "402 Payment Required: insufficient_balance"
+    expect:
+      stdout_contains:
+        - 'kind=no-credit'
+        - 'deepseek reports insufficient credit'
+        - 'insufficient_balance'
+        - 'platform.deepseek.com'
+        # Mentions the JUST-CREATED-KEY footnote so users don't churn on quota latency.
+        - '~10 minutes'
+
+  - name: '5xx server error → kind=server, suggests retry shortly'
+    shell: |
+      mod8 dev:explain-error groq "503 Service Unavailable: server overloaded"
+    expect:
+      stdout_contains:
+        - 'kind=server'
+        - 'groq returned a server error (HTTP 503)'
+        - 'server overloaded'
+        - 'having issues'
+        - 'retry shortly'
+
+  - name: 'network error → kind=network, switch back + check connection'
+    shell: |
+      mod8 dev:explain-error openrouter "fetch failed: ENOTFOUND openrouter.ai"
+    expect:
+      stdout_contains:
+        - 'kind=network'
+        - "couldn't reach openrouter"
+        - 'ENOTFOUND'
+        - 'Check your connection'
+
+  - name: 'timeout → kind=timeout, retry shortly'
+    shell: |
+      mod8 dev:explain-error xai "Request timed out after 60s"
+    expect:
+      stdout_contains:
+        - 'kind=timeout'
+        - 'request to xai timed out'
+        - 'retry shortly'
+
+  - name: 'model unavailable → kind=model, override env var hint'
+    shell: |
+      mod8 dev:explain-error mistral "model \`bogus-1\` does not exist"
+    expect:
+      stdout_contains:
+        - 'kind=model'
+        - 'mistral model not available'
+        - 'MOD8_MISTRAL_MODEL'
+
+  - name: 'other / unknown error → kind=other, raw message preserved (no fake diagnosis)'
+    shell: |
+      mod8 dev:explain-error openai "completely surprising message we have never seen"
+    expect:
+      stdout_contains:
+        - 'kind=other'
+        - 'openai failed'
+        - 'completely surprising message we have never seen'
+        - "Type 'mod8' to switch back"
+      stdout_omits:
+        # Never replace an unknown error with a fabricated diagnosis.
+        - 'kind=auth'
+        - 'kind=forbidden'
+        - 'kind=rate-limit'
+
+  - name: 'raw provider message is preserved verbatim across kinds (search-friendly)'
+    shell: |
+      mod8 dev:explain-error google "[403 Forbidden] Project 12345 has been denied access. Please contact support."
+    expect:
+      stdout_contains:
+        # Exact quote of the provider's wording — user can copy and search.
+        - "'Project 12345 has been denied access. Please contact support.'"
+
+  - name: '403 NOT confused with billing/quota — distinct fix path'
+    shell: |
+      mod8 dev:explain-error google "[403 Forbidden] Your project has been denied access. Please contact support."
+    expect:
+      stdout_contains:
+        - 'kind=forbidden'
+        - 'project-level block'
+      stdout_omits:
+        # No "out of credit" / "top up" diversions.
+        - 'kind=no-credit'
+        - 'Top up at'
+        - 'insufficient credit'

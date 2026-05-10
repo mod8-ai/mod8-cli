@@ -1,0 +1,81 @@
+name: keys management
+description: mod8 keys set / list / remove
+
+tests:
+  - name: empty state shows all three providers as not set
+    run: mod8 keys list
+    expect:
+      stdout_contains:
+        - anthropic
+        - openai
+        - google
+        - "(not set)"
+      exit_code: 0
+
+  - name: keys list points at the right config path
+    run: mod8 keys list
+    expect:
+      stdout_contains: "Stored at"
+      stdout_matches: 'Stored at .+/providers\.json'
+
+  - name: set saves a key, list shows it masked
+    steps:
+      - run: mod8 keys set anthropic
+        stdin: "sk-ant-fake-1234567890abcdef"
+        expect:
+          stdout_contains: "Saved key for"
+      - run: mod8 keys list
+        expect:
+          stdout_matches: 'anthropic\s+sk-a.*cdef'
+          stdout_omits: "1234567890"
+
+  - name: providers.json is created with mode 0600
+    steps:
+      - run: mod8 keys set anthropic
+        stdin: "test-key-value"
+      - shell: "true"
+        expect:
+          file_exists: "$MOD8_CONFIG_DIR/providers.json"
+          file_mode: "$MOD8_CONFIG_DIR/providers.json:600"
+
+  - name: remove deletes the saved key
+    steps:
+      - run: mod8 keys set openai
+        stdin: "sk-openai-fake-key"
+      - run: mod8 keys remove openai
+        expect:
+          stdout_contains: "Removed key for openai"
+      - run: mod8 keys list
+        expect:
+          stdout_omits: "fake"
+
+  - name: invalid provider name rejected with friendly error
+    run: mod8 keys set claude
+    stdin: "ignored"
+    expect:
+      stderr_contains: "Unknown provider"
+      exit_code: 1
+
+  - name: remove on never-set key is non-fatal
+    run: mod8 keys remove google
+    expect:
+      stdout_contains: "No key was set for google"
+      exit_code: 0
+
+  - name: multiple keys coexist
+    steps:
+      - run: mod8 keys set anthropic
+        stdin: "ant-key-aaaa"
+      - run: mod8 keys set openai
+        stdin: "oai-key-bbbb"
+      - run: mod8 keys set google
+        stdin: "ggl-key-cccc"
+      - run: mod8 keys list
+        expect:
+          stdout_matches: 'anthropic\s+ant-.*aaaa'
+      - run: mod8 keys list
+        expect:
+          stdout_matches: 'openai\s+oai-.*bbbb'
+      - run: mod8 keys list
+        expect:
+          stdout_matches: 'google\s+ggl-.*cccc'

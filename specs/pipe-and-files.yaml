@@ -1,0 +1,40 @@
+name: pipe + @file inputs
+description: stdin pipe and @path references reach the model
+
+tests:
+  - name: piped stdin is appended to the prompt sent to provider
+    shell: "echo 'piped content here' | MOD8_MOCK=1 MOD8_MOCK_ECHO=1 MOD8_AUTO_CONFIRM=1 mod8 --all 'explain'"
+    expect:
+      stdout_contains:
+        - explain
+        - "piped content here"
+
+  - name: "@file is read and inlined under [file:] header"
+    steps:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/fixtures
+          echo 'function broken() { return -1; }' > $MOD8_CONFIG_DIR/fixtures/sample.js
+      - shell: "MOD8_MOCK=1 MOD8_MOCK_ECHO=1 MOD8_AUTO_CONFIRM=1 mod8 --all \"review @$MOD8_CONFIG_DIR/fixtures/sample.js\""
+        expect:
+          stdout_contains:
+            - "[file:"
+            - "function broken"
+
+  - name: "missing @file produces friendly warning, prompt still runs"
+    shell: "MOD8_MOCK=1 MOD8_MOCK_ECHO=1 MOD8_AUTO_CONFIRM=1 mod8 --all 'explain @/tmp/nope-does-not-exist.js'"
+    expect:
+      stderr_contains:
+        - warning
+        - "not found"
+      stdout_contains: "Total:"
+
+  - name: "@file with relative path resolves against cwd"
+    steps:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/work
+          echo 'export const x = 42;' > $MOD8_CONFIG_DIR/work/util.ts
+      - shell: "cd $MOD8_CONFIG_DIR/work && MOD8_MOCK=1 MOD8_MOCK_ECHO=1 MOD8_AUTO_CONFIRM=1 mod8 --all 'review @util.ts'"
+        expect:
+          stdout_contains:
+            - "[file:"
+            - "export const x = 42"

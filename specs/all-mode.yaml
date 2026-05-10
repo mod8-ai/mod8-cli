@@ -1,0 +1,44 @@
+name: --all parallel mode
+description: --all renders three speaker blocks plus Total summary
+
+tests:
+  - name: all three providers respond, total line shows 3/3
+    shell: "MOD8_MOCK=1 mod8 --all 'compare in 5 words'"
+    expect:
+      stdout_contains:
+        - "Anthropic (Claude)"
+        - "OpenAI (GPT)"
+        - "Google (Gemini)"
+        - "Total:"
+        - "3/3 ok"
+      exit_code: 0
+
+  - name: partial failure renders friendly per-block error and partial total
+    shell: "MOD8_MOCK=1 MOD8_MOCK_FAIL=openai mod8 --all 'test'"
+    expect:
+      stdout_contains:
+        - "Anthropic (Claude)"
+        - "✗ failed"
+        - "Google (Gemini)"
+        - "2/3 ok"
+
+  - name: 401 error in --all is classified per-block
+    shell: "MOD8_MOCK=1 MOD8_MOCK_ERROR=401 MOD8_MOCK_ERROR_PROVIDER=anthropic mod8 --all 'test'"
+    expect:
+      stdout_contains:
+        - "✗ failed"
+        - "invalid API key"
+        - "2/3 ok"
+
+  - name: cost displayed in Total
+    shell: "MOD8_MOCK=1 mod8 --all 'hi'"
+    expect:
+      stdout_matches: "Total:.*tok.*\\$"
+
+  - name: consent gate refuses piped stdin without auto-confirm
+    shell: "echo 'n' | MOD8_AUTO_CONFIRM= MOD8_MOCK=1 mod8 --all 'test'"
+    expect:
+      stderr_contains:
+        - "first-run confirmation"
+        - "MOD8_AUTO_CONFIRM=1"
+      exit_code: 1

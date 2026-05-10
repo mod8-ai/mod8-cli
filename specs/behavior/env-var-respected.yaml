@@ -1,0 +1,108 @@
+name: behavior — MOD8_<ID>_MODEL env var is respected
+description: |
+  Bug: the env var advertised in the "model not available" error message
+  was silently ignored.  The dead code in src/providers/google.ts honored
+  MOD8_GOOGLE_MODEL but no one imports it; the live path in generic.ts
+  used `opts.model ?? entry.defaultModel` and never read the env.
+
+  Fix: every provider call goes through `resolveModel()` which checks
+  opts.model → MOD8_<ID>_MODEL → providers.json defaultModel.  These specs
+  prove the env var beats the providers.json default (no allowlist is
+  consulted along the way; whatever string the env sets is what the SDK
+  receives).
+
+tests:
+  - name: 'MOD8_GOOGLE_MODEL beats providers.json default'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {
+              "apiKey": "x",
+              "apiType": "gemini",
+              "name": "Google (Gemini)",
+              "defaultModel": "gemini-2.0-flash",
+              "color": "#06B6D4"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'MOD8_GOOGLE_MODEL=gemini-2.5-flash mod8 dev:resolve-model google'
+    expect:
+      stdout_contains:
+        - 'model="gemini-2.5-flash"'
+        - 'source=env'
+        - 'envVar=MOD8_GOOGLE_MODEL'
+
+  - name: 'env var passes through unchanged — even an arbitrary string'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {"apiKey":"x","apiType":"gemini","name":"Google (Gemini)","defaultModel":"x","color":"#06B6D4"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'MOD8_GOOGLE_MODEL=this-could-be-any-string-mod8-does-not-allowlist mod8 dev:resolve-model google'
+    expect:
+      stdout_contains:
+        - 'model="this-could-be-any-string-mod8-does-not-allowlist"'
+        - 'source=env'
+
+  - name: 'env var name is built from id — works for non-google providers'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'MOD8_ANTHROPIC_MODEL=claude-opus-4-7 mod8 dev:resolve-model anthropic'
+    expect:
+      stdout_contains:
+        - 'model="claude-opus-4-7"'
+        - 'source=env'
+        - 'envVar=MOD8_ANTHROPIC_MODEL'
+
+  - name: 'empty env var is ignored, falls through to providers.json'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {"apiKey":"x","apiType":"gemini","name":"Google (Gemini)","defaultModel":"gemini-2.0-flash","color":"#06B6D4"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'MOD8_GOOGLE_MODEL= mod8 dev:resolve-model google'
+    expect:
+      stdout_contains:
+        - 'model="gemini-2.0-flash"'
+        - 'source=providers.json'
+
+  - name: 'env-resolved model lands in the SDK URL the provider is about to hit'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {"apiKey":"AIzaSy-FAKE-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAAA","apiType":"gemini","name":"Google (Gemini)","defaultModel":"gemini-2.0-flash","color":"#06B6D4"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    # No network — dev:debug-call runs the same resolution + URL builder as
+    # the actual provider call path.  The URL we print here is identical
+    # to what the SDK will request.
+    shell: 'MOD8_GOOGLE_MODEL=gemini-2.5-flash mod8 dev:debug-call google'
+    expect:
+      stdout_contains:
+        - 'providerId=google'
+        - 'model="gemini-2.5-flash"'
+        - 'modelSource=env'
+        - 'models/gemini-2.5-flash:streamGenerateContent'
+        # API key is masked — never the raw value.
+        - 'key=AIzaSy…AAAA'

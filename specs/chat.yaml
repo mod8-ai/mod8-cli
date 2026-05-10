@@ -1,0 +1,91 @@
+name: chat REPL surface
+description: |
+  The chat REPL uses Ink, which needs a raw-mode TTY.  Verify spawns child
+  processes with piped stdin (no PTY available), so we can't drive the REPL
+  through a full interaction.  What we *can* do is run `mod8 new` / `mod8
+  resume`, capture whatever Ink rendered before crashing on raw-mode, and
+  assert against that early output.  Deeper REPL flows (mode switching, /clear,
+  intent detection) are covered by chat-smoke.mjs (ink-testing-library) and
+  manual smoke tests, not by mod8 verify.
+
+tests:
+  - name: mod8 new prints welcome banner before raw-mode crash
+    requires_api_key: true
+    repl:
+      run: mod8 new
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stdout_contains:
+        - "mod8"
+        - "switch to claude"
+        - "/clear"
+        - "/exit"
+
+  - name: mod8 new without key reports friendly key error
+    repl:
+      run: "unset ANTHROPIC_API_KEY; mod8 new"
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stderr_contains:
+        - "No Anthropic key configured"
+        - "mod8 keys set anthropic"
+
+  - name: mod8 resume on missing id is rejected before chat starts
+    repl:
+      run: mod8 resume 2099-12-31-zzzz
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stderr_contains:
+        - "no session with id"
+        - "mod8 list"
+      exit_code: 1
+
+  - name: mod8 resume on malformed id is rejected before chat starts
+    repl:
+      run: mod8 resume not-a-real-id
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stderr_contains: "no session with id"
+      exit_code: 1
+
+  - name: mod8 resume against seeded session loads transcript into welcome
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-rsme.json <<'JSON'
+          {
+            "version": 1,
+            "id": "2026-05-07-rsme",
+            "title": "Resume test",
+            "createdAt": 1715000000000,
+            "lastActivity": 1715000000000,
+            "messages": [
+              {"role": "user", "content": "what is the capital of France", "mode": "host"},
+              {"role": "assistant", "content": "Paris.", "mode": "host"}
+            ]
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-rsme.json
+    repl:
+      run: mod8 resume 2026-05-07-rsme
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stdout_contains:
+        - "what is the capital of France"
+        - "Paris"

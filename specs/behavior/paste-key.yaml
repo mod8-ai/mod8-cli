@@ -1,0 +1,342 @@
+name: behavior — inline paste-key flow
+description: |
+  Tests that the user can add an API key by pasting it inline in the chat,
+  without leaving the REPL.  The contract:
+    - "add a key" / "i want to paste a key" / "let me add gemini" → consent
+      line is shown, next message is treated as a key paste.
+    - Pasted key → masked in the transcript (and dev:simulate stdout), full
+      key written to providers.json, masked or absent from session JSON.
+    - Non-key on the next turn → friendly rejection, no save, no trap.
+    - "save my work" / "let's add a feature" → NOT a paste-key intent
+      (false-positive guard).
+    - "mod8" while awaiting a key → clean cancel via parseHostBack.
+
+  All exercised through `mod8 dev:simulate`, which runs the same routing
+  state machine the chat REPL uses (no Ink, no LLM).
+
+tests:
+  - name: '"i want to paste a key" → consent + next-turn key is saved'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      i want to paste a key
+      sk-ant-api03-FAKE-TEST-KEY-DOES-NOT-WORK-AAAAAAAAAAAAAAAA
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json
+    expect:
+      stdout_contains:
+        - 'step=1 input="i want to paste a key" mode=host provider=host action=paste-consent'
+        # The pasted key is masked in stdout — never the full secret.
+        - 'step=2 input="sk-ant-…AAAA" mode=host provider=host action=paste-saved id=anthropic'
+        # And the full key DOES land in providers.json.
+        - '"apiKey": "sk-ant-api03-FAKE-TEST-KEY-DOES-NOT-WORK-AAAAAAAAAAAAAAAA"'
+      stdout_omits:
+        # The raw key must NEVER appear in stdout (only providers.json).
+        # The "apiKey" line above is the only allowed occurrence — checked
+        # separately by `stdout_contains`.
+        - 'step=2 input="sk-ant-api03-FAKE'
+
+  - name: '"add a key" + invalid pattern → friendly rejection, no save'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      add a key
+      hello not a key
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json 2>/dev/null || echo "no providers.json"
+    expect:
+      stdout_contains:
+        - 'step=1 input="add a key" mode=host provider=host action=paste-consent'
+        - 'step=2 input="hello not a key" mode=host provider=host action=paste-rejected'
+        - 'no providers.json'
+
+  - name: '"let me add gemini" → consent target=google + AIza key saves to google'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      let me add gemini
+      AIzaSyFAKE-TEST-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAA
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json
+    expect:
+      stdout_contains:
+        - 'step=1 input="let me add gemini" mode=host provider=host action=paste-consent target=google'
+        - 'step=2 input="AIzaSy…AAAA" mode=host provider=host action=paste-saved id=google'
+        - '"apiKey": "AIzaSyFAKE-TEST-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAA"'
+        - '"name": "Google (Gemini)"'
+
+  - name: '"save my work" / "lets add a feature" → NOT paste-key (false-positive guard)'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      save my work
+      lets add a feature
+      can you set the timer
+      put in a code review
+      INPUTS
+    expect:
+      stdout_contains:
+        # All of these should fall through to the LLM (action=send), NOT trap
+        # the user in a paste-key consent flow.
+        - 'step=1 input="save my work" mode=host provider=host action=send'
+        - 'step=2 input="lets add a feature" mode=host provider=host action=send'
+        - 'step=3 input="can you set the timer" mode=host provider=host action=send'
+        - 'step=4 input="put in a code review" mode=host provider=host action=send'
+      stdout_omits:
+        - 'paste-consent'
+
+  - name: '"mod8" while awaiting key → clean cancel via host-back-noop'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      add a key
+      mod8
+      hello
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="add a key" mode=host provider=host action=paste-consent'
+        # "mod8" cancels the paste cleanly (already in host → no-op).  The
+        # awaiting state is cleared so the next message is a normal turn.
+        - 'step=2 input="mod8" mode=host provider=host action=host-back-noop'
+        - 'step=3 input="hello" mode=host provider=host action=send'
+      stdout_omits:
+        - 'paste-rejected'
+        - 'paste-saved'
+
+  - name: 'multiple paste flows in one session — each saves the right provider'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      add a key
+      sk-ant-api03-CLAUDE-KEY-AAAAAAAAAAAAAAAAAAAAAAAA
+      paste my groq key
+      gsk_FAKETESTAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      let me add xai
+      xai-FAKETESTAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      INPUTS
+      echo "---ids---"
+      node -e "const fs = require('fs'); const p = JSON.parse(fs.readFileSync(process.env.MOD8_CONFIG_DIR + '/providers.json', 'utf8')); console.log(Object.keys(p).sort().join(','));"
+    expect:
+      stdout_contains:
+        - 'action=paste-saved id=anthropic'
+        - 'action=paste-saved id=groq'
+        - 'action=paste-saved id=xai'
+        - 'anthropic,groq,xai'
+      stdout_omits:
+        # No raw key prefixes leaked.
+        - 'sk-ant-api03-CLAUDE'
+        - 'gsk_FAKETEST'
+        - 'xai-FAKETEST'
+
+  - name: 'unknown key prefix → rejection (not silent acceptance)'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      i want to add a key
+      this-is-some-random-string-without-a-known-prefix-AAAAAAAA
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json 2>/dev/null || echo "no providers.json"
+    expect:
+      stdout_contains:
+        - 'action=paste-consent'
+        - 'action=paste-rejected'
+        - 'no providers.json'
+
+  - name: 'out-of-band key paste (no consent) — masked in stdout, NOT saved'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      here is my key sk-ant-api03-OUT-OF-BAND-FAKE-AAAAAAAAAAAAAA
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json 2>/dev/null || echo "no providers.json"
+    expect:
+      stdout_contains:
+        # Falls through as a plain message; key is masked in dev:simulate stdout
+        # so it never lands in scrollback / spec output.
+        - 'sk-ant-…AAAA'
+        - 'no providers.json'
+      stdout_omits:
+        - 'sk-ant-api03-OUT-OF-BAND'
+
+  - name: 'change/update/replace/rotate/swap verbs trigger consent (was missing — host LLM lectured instead)'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {"apiKey":"x","apiType":"gemini","name":"Google (Gemini)","defaultModel":"gemini-2.5-flash","color":"#06B6D4"},
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"},
+            "openai": {"apiKey":"x","apiType":"openai-compat","name":"codex","baseUrl":"https://api.openai.com/v1","defaultModel":"gpt-4o","color":"#10B981"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      for msg in "lets change the google key" "update my anthropic key" "replace the openai key" "rotate google key" "swap out the gemini key" "renew the anthropic key" "switch the gemini key"; do
+        echo "--- $msg ---"
+        mod8 dev:simulate <<EOF
+      $msg
+      EOF
+      done
+    expect:
+      stdout_contains:
+        - 'input="lets change the google key" mode=host provider=host action=paste-consent target=google'
+        - 'input="update my anthropic key" mode=host provider=host action=paste-consent target=anthropic'
+        - 'input="replace the openai key" mode=host provider=host action=paste-consent target=openai'
+        - 'input="rotate google key" mode=host provider=host action=paste-consent target=google'
+        - 'input="swap out the gemini key" mode=host provider=host action=paste-consent target=google'
+        - 'input="renew the anthropic key" mode=host provider=host action=paste-consent target=anthropic'
+        - 'input="switch the gemini key" mode=host provider=host action=paste-consent target=google'
+      stdout_omits:
+        - 'action=send'
+
+  - name: 'typo-tolerant key noun — "kew"/"kee"/"keey" still trigger consent'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {"apiKey":"x","apiType":"gemini","name":"Google (Gemini)","defaultModel":"gemini-2.5-flash","color":"#06B6D4"},
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"},
+            "openai": {"apiKey":"x","apiType":"openai-compat","name":"codex","baseUrl":"https://api.openai.com/v1","defaultModel":"gpt-4o","color":"#10B981"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      for msg in "i want to change the google kew" "change the google kew" "update my anthropic kee" "rotate the openai keey" "change my kew" "rotate the kee"; do
+        echo "--- $msg ---"
+        mod8 dev:simulate <<EOF
+      $msg
+      EOF
+      done
+    expect:
+      stdout_contains:
+        - 'input="i want to change the google kew" mode=host provider=host action=paste-consent target=google'
+        - 'input="change the google kew" mode=host provider=host action=paste-consent target=google'
+        - 'input="update my anthropic kee" mode=host provider=host action=paste-consent target=anthropic'
+        - 'input="rotate the openai keey" mode=host provider=host action=paste-consent target=openai'
+        # No provider — generic consent (no target= field).
+        - 'input="change my kew" mode=host provider=host action=paste-consent rest=""'
+        - 'input="rotate the kee" mode=host provider=host action=paste-consent rest=""'
+      stdout_omits:
+        - 'action=send'
+
+  - name: 'typo guards — non-key trailing words DO NOT trigger consent'
+    shell: |
+      for msg in "change google account password" "rotate the logs" "change the file" "update the readme" "swap out the cables"; do
+        echo "--- $msg ---"
+        mod8 dev:simulate <<EOF
+      $msg
+      EOF
+      done
+    expect:
+      # All five must fall through to LLM (action=send) — none of the
+      # trailing words fuzzy-matches "key" / "credentials" / "secret".
+      stdout_contains:
+        - 'input="change google account password" mode=host provider=host action=send'
+        - 'input="rotate the logs" mode=host provider=host action=send'
+        - 'input="change the file" mode=host provider=host action=send'
+        - 'input="update the readme" mode=host provider=host action=send'
+        - 'input="swap out the cables" mode=host provider=host action=send'
+      stdout_omits:
+        - 'paste-consent'
+
+  - name: 'change/update/etc DO NOT collide with provider routing'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {"apiKey":"x","apiType":"openai-compat","name":"codex","baseUrl":"https://api.openai.com/v1","defaultModel":"gpt-4o","color":"#10B981"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      switch to codex
+      switch back
+      use codex
+      INPUTS
+    expect:
+      stdout_contains:
+        # "switch to codex" still routes (not paste-consent)
+        - 'step=1 input="switch to codex" mode=work provider=openai action=route'
+        # "switch back" is host-back (not paste)
+        - 'step=2 input="switch back" mode=host provider=host action=host-back'
+        # "use codex" still routes
+        - 'step=3 input="use codex" mode=work provider=openai action=route'
+
+  - name: 'inline paste-key PRESERVES existing defaultModel (regression: was clobbering)'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          # User has google configured with a CUSTOM model (gemini-2.5-pro,
+          # not the registry default).  When they paste a new key inline,
+          # mod8 used to overwrite the entry wholesale with the template
+          # defaults — silently downgrading them to gemini-2.0-flash.
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {
+              "apiKey": "OLD-KEY",
+              "apiType": "gemini",
+              "name": "Google (Gemini)",
+              "defaultModel": "gemini-2.5-pro",
+              "color": "#06B6D4"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      add a key
+      AIzaSy-FAKE-NEW-KEY-NOT-REAL-AAAAAAAAAAAAAAAAAA
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json
+    expect:
+      stdout_contains:
+        - 'paste-saved id=google'
+        # New key reached disk.
+        - '"apiKey": "AIzaSy-FAKE-NEW-KEY-NOT-REAL-AAAAAAAAAAAAAAAAAA"'
+        # User's custom default model survived.
+        - '"defaultModel": "gemini-2.5-pro"'
+      stdout_omits:
+        # The bug we're fixing: entry got reset to the template default.
+        - '"defaultModel": "gemini-2.0-flash"'
+        - '"defaultModel": "gemini-2.5-flash"'
+
+  - name: 'inline paste-key on FRESH provider uses template default (no existing entry to preserve)'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      add a key
+      AIzaSy-FAKE-FRESH-KEY-NOT-REAL-AAAAAAAAAAAAAAA
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json
+    expect:
+      stdout_contains:
+        - 'paste-saved id=google'
+        # No prior entry → use the (updated) template default.
+        - '"defaultModel": "gemini-2.5-flash"'
+
+  - name: 'paste-key intent recognized in many phrasings'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      add a key
+      paste my key
+      save my api key
+      register a key
+      i want to add a key
+      i wanna paste a key
+      i'd like to register a key
+      let me add a key
+      lets save a key
+      put in a key
+      INPUTS
+    expect:
+      # Every line should produce paste-consent + leave us awaiting; the very
+      # next line is the next phrasing, which is NOT a key, so it gets
+      # paste-rejected.  We only assert that consent fires for every odd step.
+      stdout_contains:
+        - 'step=1 input="add a key" mode=host provider=host action=paste-consent'
+        - 'step=3 input="save my api key" mode=host provider=host action=paste-consent'
+        - 'step=5 input="i want to add a key" mode=host provider=host action=paste-consent'
+        - 'step=7 input="i''d like to register a key" mode=host provider=host action=paste-consent'
+        - 'step=9 input="lets save a key" mode=host provider=host action=paste-consent'

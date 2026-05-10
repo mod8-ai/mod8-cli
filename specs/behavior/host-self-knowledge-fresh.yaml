@@ -1,0 +1,66 @@
+name: behavior — host system prompt refreshes mid-session
+description: |
+  Bug 1: when the user adds a provider via the inline paste-key flow during
+  a chat session, the host (mod8) system prompt was built once at startup
+  and never updated.  The next host turn would say "you don't have google
+  configured" — even though we just saved a Google key.
+
+  Fix: rebuild buildHostSystem(await readHostContext()) before every host
+  turn.  The cost is negligible (one providers.json read per turn).
+
+  These specs verify the system prompt's "Providers configured RIGHT NOW"
+  block changes to reflect the current providers.json — proving the
+  rebuild path is wired.
+
+tests:
+  - name: 'empty providers.json → host prompt says "(none yet)"'
+    shell: 'mod8 dev:host-system'
+    expect:
+      stdout_contains:
+        - 'Providers configured RIGHT NOW (in this session) — 0 configured'
+        - '(none yet'
+
+  - name: 'after seeding a provider → host prompt enumerates it'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {
+              "apiKey": "x",
+              "apiType": "gemini",
+              "name": "Google (Gemini)",
+              "defaultModel": "gemini-2.0-flash",
+              "color": "#06B6D4"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-system'
+    expect:
+      stdout_contains:
+        - 'Providers configured RIGHT NOW (in this session) — 1 configured'
+        - 'id: "google"'
+        - 'Google (Gemini)'
+
+  - name: 'inline paste-key (dev:simulate) saves provider; next host-system reflects it'
+    shell: |
+      # 1. Empty providers.json initially.
+      mkdir -p $MOD8_CONFIG_DIR
+      # Confirm starting state.
+      mod8 dev:host-system | grep -F 'RIGHT NOW (in this session) — 0 configured'
+      # 2. User pastes a key inline (the same path the chat REPL uses).
+      mod8 dev:simulate <<'INPUTS'
+      i want to paste a key
+      AIzaSyFAKE-TEST-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAA
+      INPUTS
+      # 3. Now the host system prompt MUST reflect the new provider — without
+      #    needing a chat restart.  This proves the per-turn rebuild works.
+      echo "---after-paste---"
+      mod8 dev:host-system
+    expect:
+      stdout_contains:
+        - '---after-paste---'
+        - 'Providers configured RIGHT NOW (in this session) — 1 configured'
+        - 'id: "google"'
+        - 'Google (Gemini)'

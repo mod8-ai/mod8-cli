@@ -1,0 +1,90 @@
+name: behavior — switch-back works mid-error
+description: |
+  Repro: user is in work mode, the work provider is rate-limited / 401 / down,
+  user types "mod8" or "back to mod8" trying to escape — every input was
+  being sent to the broken provider, getting an error, and the user was
+  stuck.
+
+  Fix verified by these tests: parseHostBack runs LOCALLY in the chat REPL
+  before any provider call, so all of these inputs are intercepted as a
+  switch-back to host regardless of whether the work provider is healthy
+  or failing. dev:resolve mirrors chat.tsx's match priority — "host-back"
+  always wins over "route" / "compare" / etc.
+
+tests:
+  - name: 'bare "mod8" is intercepted as switch-back'
+    shell: 'mod8 dev:resolve "mod8"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"/mod8" is intercepted as switch-back'
+    shell: 'mod8 dev:resolve "/mod8"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"@mod8" is intercepted as switch-back'
+    shell: 'mod8 dev:resolve "@mod8"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"back to mod8" is intercepted'
+    shell: 'mod8 dev:resolve "back to mod8"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"switch to mod8" is intercepted (was previously routing to non-existent provider id "mod8")'
+    shell: 'mod8 dev:resolve "switch to mod8"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"change to mod8" is intercepted'
+    shell: 'mod8 dev:resolve "change to mod8"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"go back" is intercepted'
+    shell: 'mod8 dev:resolve "go back"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: 'bare "back" is intercepted'
+    shell: 'mod8 dev:resolve "back"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"switch back" is intercepted'
+    shell: 'mod8 dev:resolve "switch back"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"return to mod8" is intercepted'
+    shell: 'mod8 dev:resolve "return to mod8"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"talk to mod8" is intercepted (mod8 is special — never a provider id)'
+    shell: 'mod8 dev:resolve "talk to mod8"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"back to host" is intercepted (alternate phrasing)'
+    shell: 'mod8 dev:resolve "back to host"'
+    expect:
+      stdout_contains: "host-back"
+
+  - name: '"mod8 thanks for the help" carries rest="thanks for the help"'
+    shell: 'mod8 dev:resolve "mod8 thanks for the help"'
+    expect:
+      stdout_matches: 'host-back rest="thanks for the help"'
+
+  - name: an unrelated message ("write me a haiku") is NOT mistaken for switch-back
+    shell: 'mod8 dev:resolve "write me a haiku"'
+    expect:
+      stdout_contains: "none"
+
+  - name: '"use codex" is NOT swallowed by host-back (still a provider route)'
+    shell: 'mod8 dev:resolve "use codex"'
+    expect:
+      stdout_contains: "route id=codex"
+      stdout_omits:
+        - "host-back"

@@ -1,0 +1,115 @@
+name: sessions (persistence)
+description: new / list / resume / clear / save behavior — uses storage layer directly when chat invocation would require API
+
+tests:
+  - name: list shows empty state when no sessions exist
+    run: mod8 list
+    expect:
+      stdout_contains: "no sessions yet"
+
+  - name: list shows seeded session with id, fallback title, turn count
+    steps:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-aaaa.json <<'JSON'
+          {
+            "version": 1,
+            "id": "2026-05-07-aaaa",
+            "title": null,
+            "createdAt": 1715000000000,
+            "lastActivity": 1715000000000,
+            "messages": [
+              {"role": "user", "content": "how do I refactor my auth middleware", "mode": "host"},
+              {"role": "assistant", "content": "what stack are you using?", "mode": "host"}
+            ]
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-aaaa.json
+      - run: mod8 list
+        expect:
+          stdout_contains:
+            - "2026-05-07-aaaa"
+            - "how do I refactor my"
+            - "1 turn"
+
+  - name: list shows real title when present
+    steps:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-bbbb.json <<'JSON'
+          {
+            "version": 1,
+            "id": "2026-05-07-bbbb",
+            "title": "Refactoring auth middleware",
+            "createdAt": 1715000000000,
+            "lastActivity": 1715000000000,
+            "messages": [
+              {"role": "user", "content": "x", "mode": "host"},
+              {"role": "assistant", "content": "y", "mode": "host"}
+            ]
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-bbbb.json
+      - run: mod8 list
+        expect:
+          stdout_contains: "Refactoring auth middleware"
+
+  - name: list sorts by most recent activity first
+    steps:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-cccc.json <<'JSON'
+          {"version":1,"id":"2026-05-07-cccc","title":"Older","createdAt":1700000000000,"lastActivity":1700000000000,"messages":[{"role":"user","content":"x","mode":"host"},{"role":"assistant","content":"y","mode":"host"}]}
+          JSON
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-dddd.json <<'JSON'
+          {"version":1,"id":"2026-05-07-dddd","title":"Newer","createdAt":1715000000000,"lastActivity":1715000000000,"messages":[{"role":"user","content":"x","mode":"host"},{"role":"assistant","content":"y","mode":"host"}]}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/*.json
+      - run: mod8 list
+        expect:
+          stdout_matches: "Newer[\\s\\S]*Older"
+
+  - name: list shows hint to resume by id
+    steps:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-eeee.json <<'JSON'
+          {"version":1,"id":"2026-05-07-eeee","title":"x","createdAt":0,"lastActivity":0,"messages":[]}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-eeee.json
+      - run: mod8 list
+        expect:
+          stdout_contains: "mod8 resume <id>"
+
+  - name: resume on bogus id is rejected with friendly error
+    steps:
+      - run: mod8 keys set anthropic
+        stdin: "fake-key"
+      - run: mod8 resume 2099-12-31-zzzz
+        expect:
+          stderr_contains:
+            - "no session with id"
+            - "mod8 list"
+          exit_code: 1
+
+  - name: resume on malformed id is rejected
+    steps:
+      - run: mod8 keys set anthropic
+        stdin: "fake-key"
+      - run: mod8 resume not-a-real-id
+        expect:
+          stderr_contains: "no session with id"
+          exit_code: 1
+
+  - name: a seeded session file is honored at 0600
+    steps:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-perm.json <<'JSON'
+          {"version":1,"id":"2026-05-07-perm","title":"perm test","createdAt":0,"lastActivity":0,"messages":[]}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-perm.json
+      - run: mod8 list
+        expect:
+          stdout_contains: "2026-05-07-perm"
+          file_mode: "$MOD8_CONFIG_DIR/sessions/2026-05-07-perm.json:600"

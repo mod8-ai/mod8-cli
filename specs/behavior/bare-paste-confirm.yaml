@@ -1,0 +1,125 @@
+name: behavior — bare-paste auto-detect (no consent first)
+description: |
+  When the user pastes a recognizable API key into chat WITHOUT first saying
+  "add a key", mod8 should NOT pass the message to the host LLM (which then
+  lectures about `mod8 keys set <id>`).  Instead:
+
+    1. Detect the key locally (sk-ant-/sk-or-/AIza/etc.).
+    2. Mask it for display.
+    3. Cache the raw key in memory only (NEVER session JSON).
+    4. Ask "Save it as `<id>`? (yes / no)".
+    5. Affirmative → save to providers.json, confirm.
+       Negative → discard, acknowledge.
+       Anything else → discard, fall through to normal dispatch (no trap).
+
+  Specs cover the happy path, the broadened paste-key intent regex (which
+  now accepts "this/that/these/those/it/them" as articles and the bare-
+  pronoun forms "save this", "use it", etc.), and the cancellation paths.
+
+tests:
+  - name: 'bare paste of anthropic key → asks "save as anthropic?"'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      sk-ant-api03-FAKE-TEST-AAAAAAAAAAAAAAAAAAAAAAAA
+      yes
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json
+    expect:
+      stdout_contains:
+        # Step 1: bare paste detected, key masked in stdout, pending state armed.
+        - 'step=1 input="sk-ant-…AAAA" mode=host provider=host action=paste-pending id=anthropic'
+        # Step 2: user confirms with "yes" → key is saved.
+        - 'step=2 input="yes" mode=host provider=host action=paste-saved id=anthropic'
+        # And the full key DOES land in providers.json.
+        - '"apiKey": "sk-ant-api03-FAKE-TEST-AAAAAAAAAAAAAAAAAAAAAAAA"'
+      stdout_omits:
+        # The raw key must never appear in stdout (only providers.json).
+        - 'step=1 input="sk-ant-api03-FAKE'
+
+  - name: '"save it" / "save this" / "use it" all trigger save in pendingKey state'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      sk-ant-api03-FAKE-KEY-1-AAAAAAAAAAAAAAAAAAAA
+      save it
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json
+    expect:
+      stdout_contains:
+        - 'step=1 input="sk-ant-…AAAA" mode=host provider=host action=paste-pending id=anthropic'
+        - 'step=2 input="save it" mode=host provider=host action=paste-saved id=anthropic'
+        - '"apiKey": "sk-ant-api03-FAKE-KEY-1-AAAAAAAAAAAAAAAAAAAA"'
+
+  - name: 'broadened intent — "add this key!" triggers consent (was rejected before)'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      add this key!
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="add this key!" mode=host provider=host action=paste-consent'
+
+  - name: '"no" cancels the bare paste and discards the key'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      AIzaSyFAKE-TEST-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAA
+      no
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json 2>/dev/null || echo "no providers.json"
+    expect:
+      stdout_contains:
+        - 'step=1 input="AIzaSy…AAAA" mode=host provider=host action=paste-pending id=google'
+        - 'step=2 input="no" mode=host provider=host action=paste-cancelled'
+        - 'no providers.json'
+
+  - name: 'unrelated input cancels paste and falls through (no trap)'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {"apiKey":"x","apiType":"openai-compat","name":"codex","baseUrl":"https://api.openai.com/v1","defaultModel":"gpt-4o","color":"#10B981"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      sk-ant-api03-FAKE-2-AAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      use codex
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="sk-ant-…AAAA" mode=host provider=host action=paste-pending id=anthropic'
+        # "use codex" is NOT an affirmative → cancel + fall through to normal
+        # routing (which switches to codex).
+        - 'step=2 input="use codex" mode=work provider=openai action=route'
+
+  - name: 'broadened article list — "let me add this anthropic key" triggers consent'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      let me add this anthropic key
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="let me add this anthropic key" mode=host provider=host action=paste-consent'
+
+  - name: 'multiple bare pastes back-to-back each get saved'
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      sk-ant-api03-CLAUDE-FAKE-AAAAAAAAAAAAAAAAAAAAAAAA
+      yes
+      AIzaSyFAKE-TEST-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAA
+      save it
+      INPUTS
+      echo "---providers.json---"
+      cat $MOD8_CONFIG_DIR/providers.json
+    expect:
+      stdout_contains:
+        - 'step=1 input="sk-ant-…AAAA" mode=host provider=host action=paste-pending id=anthropic'
+        - 'step=2 input="yes" mode=host provider=host action=paste-saved id=anthropic'
+        - 'step=3 input="AIzaSy…AAAA" mode=host provider=host action=paste-pending id=google'
+        - 'step=4 input="save it" mode=host provider=host action=paste-saved id=google'
+        - '"apiKey": "sk-ant-api03-CLAUDE-FAKE-AAAAAAAAAAAAAAAAAAAAAAAA"'
+        - '"apiKey": "AIzaSyFAKE-TEST-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAA"'

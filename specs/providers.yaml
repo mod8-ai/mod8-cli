@@ -1,0 +1,172 @@
+name: multi-provider registration
+description: |
+  Provider registry, store, and listing.  Covers built-in providers (anthropic,
+  openai, google) plus at least one less-common one (deepseek) to prove the
+  generic dispatch.  Custom-provider registration is exercised via direct
+  providers.json seeding (the interactive add-provider flow needs raw-mode
+  TTY, same caveat as the chat REPL).
+
+tests:
+  - name: providers list is empty on a fresh sandbox
+    run: mod8 providers
+    expect:
+      stdout_contains: "no providers configured yet"
+      exit_code: 0
+
+  - name: keys list shows all built-in templates including deepseek and grok
+    run: mod8 keys list
+    expect:
+      stdout_contains:
+        - anthropic
+        - openai
+        - google
+        - deepseek
+        - mistral
+        - groq
+        - xai
+        - openrouter
+        - together
+      exit_code: 0
+
+  - name: keys set works for a non-legacy built-in (deepseek)
+    steps:
+      - run: mod8 keys set deepseek
+        stdin: "sk-test-deepseek-1234567890"
+        expect:
+          stdout_contains: "Saved key for"
+      - run: mod8 keys list
+        expect:
+          stdout_matches: 'deepseek\s+sk-t.*7890'
+      - run: mod8 providers
+        expect:
+          stdout_contains:
+            - deepseek
+            - DeepSeek
+            - deepseek-chat
+            - "openai-compat"
+
+  - name: keys set works for groq (gsk_ prefix)
+    steps:
+      - run: mod8 keys set groq
+        stdin: "gsk_test_groq_abcdef123456"
+      - run: mod8 providers
+        expect:
+          stdout_contains:
+            - groq
+            - Groq
+            - "openai-compat"
+
+  - name: providers list shows base URLs for openai-compat providers
+    steps:
+      - run: mod8 keys set deepseek
+        stdin: "sk-deepseek-test"
+      - run: mod8 keys set mistral
+        stdin: "test-mistral-key"
+      - run: mod8 providers
+        expect:
+          stdout_contains:
+            - "https://api.deepseek.com"
+            - "https://api.mistral.ai/v1"
+
+  - name: providers.json is the new storage location with mode 0600
+    steps:
+      - run: mod8 keys set deepseek
+        stdin: "sk-test-deepseek"
+      - shell: "true"
+        expect:
+          file_exists: "$MOD8_CONFIG_DIR/providers.json"
+          file_mode: "$MOD8_CONFIG_DIR/providers.json:600"
+
+  - name: legacy keys.json migrates to providers.json on first read
+    steps:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/keys.json <<'JSON'
+          {"anthropic": "sk-ant-legacy-12345", "openai": "sk-legacy-oai-67890"}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/keys.json
+      - run: mod8 providers
+        expect:
+          stdout_contains:
+            - anthropic
+            - openai
+      - shell: "true"
+        expect:
+          file_exists: "$MOD8_CONFIG_DIR/providers.json"
+
+  - name: pre-seeded custom provider shows up in keys list and providers
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<'JSON'
+          {
+            "fireworks": {
+              "apiKey": "fw-test-1234",
+              "apiType": "openai-compat",
+              "name": "Fireworks AI",
+              "baseUrl": "https://api.fireworks.ai/inference/v1",
+              "defaultModel": "accounts/fireworks/models/llama-v3p1-70b-instruct",
+              "color": "#FB923C",
+              "custom": true
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    run: mod8 providers
+    expect:
+      stdout_contains:
+        - fireworks
+        - "Fireworks AI"
+        - "(custom)"
+        - "https://api.fireworks.ai"
+
+  - name: keys remove works for non-legacy provider
+    steps:
+      - run: mod8 keys set deepseek
+        stdin: "sk-deepseek-removeme"
+      - run: mod8 keys remove deepseek
+        expect:
+          stdout_contains: "Removed key for deepseek"
+      - run: mod8 providers
+        expect:
+          stdout_contains: "no providers configured"
+
+  - name: keys set rejects unknown built-in id
+    run: mod8 keys set llama
+    stdin: "ignored"
+    expect:
+      stderr_contains:
+        - "Unknown provider 'llama'"
+        - "mod8 add-provider"
+      exit_code: 1
+
+  - name: --all in mock mode renders 3 distinct provider blocks
+    shell: "MOD8_MOCK=1 MOD8_AUTO_CONFIRM=1 mod8 --all 'compare in 5 words'"
+    expect:
+      stdout_contains:
+        - "Anthropic (Claude)"
+        - "OpenAI (GPT)"
+        - "Google (Gemini)"
+        - "3/3 ok"
+
+  - name: config set default deepseek persists
+    steps:
+      - run: mod8 keys set deepseek
+        stdin: "sk-test-deepseek-default"
+      - run: mod8 config set default deepseek
+        expect:
+          stdout_contains: "Default provider set to deepseek"
+      - run: mod8 config get
+        expect:
+          stdout_contains:
+            - deepseek
+            - "(configured)"
+
+  - name: config set default rejects unknown provider with helpful message
+    run: mod8 config set default fakeprovider
+    expect:
+      stderr_contains:
+        - "Unknown provider 'fakeprovider'"
+        - "Built-in:"
+        - "deepseek"
+      exit_code: 1

@@ -1,0 +1,42 @@
+name: config management
+description: mod8 config get / set
+
+tests:
+  - name: config get on a fresh install shows fallback default
+    run: mod8 config get
+    expect:
+      stdout_contains:
+        - "default:"
+        - anthropic
+        - "(fallback)"
+      exit_code: 0
+
+  - name: config set default openai persists
+    steps:
+      - run: mod8 config set default openai
+        expect:
+          stdout_contains: "Default provider set to openai"
+      - run: mod8 config get
+        expect:
+          stdout_contains:
+            - openai
+            - "(configured)"
+
+  - name: config set rejects unknown key
+    run: mod8 config set fnord value
+    expect:
+      stderr_contains: "Unknown config key"
+      exit_code: 1
+
+  - name: config set rejects unknown provider value
+    run: mod8 config set default claude
+    expect:
+      stderr_contains: "Unknown provider"
+      exit_code: 1
+
+  - name: default routing follows config (mocked one-shot)
+    steps:
+      - run: mod8 config set default openai
+      - shell: "MOD8_MOCK=1 mod8 'say hi'"
+        expect:
+          stdout_contains: "gpt-4o"

@@ -1,0 +1,112 @@
+name: install flow
+description: |
+  npm pack + install in a fresh directory + the installed binary runs all the
+  basic commands.  This catches bin-shim regressions, missing files in the
+  tarball, and environment leakage from the dev tree.
+
+  These tests pack the project from /Users/yonatanzlit/mod8 (the absolute
+  source path), then `npm install` the resulting tarball into the per-test
+  sandbox.  Each test gets a fresh node_modules, so installs are repeatable.
+
+tests:
+  - name: pack produces a tarball with the expected files
+    setup:
+      - shell: |
+          cd /Users/yonatanzlit/mod8
+          rm -f mod8-0.1.0.tgz
+          npm pack > /tmp/mod8-pack.log 2>&1
+          test -f mod8-0.1.0.tgz || { cat /tmp/mod8-pack.log; exit 1; }
+    shell: tar tzf /Users/yonatanzlit/mod8/mod8-0.1.0.tgz
+    expect:
+      stdout_contains:
+        - "package/bin/mod8.js"
+        - "package/dist/cli.js"
+        - "package/dist/providers/registry.js"
+        - "package/dist/providers/hostSystem.js"
+        - "package/specs/providers.yaml"
+        - "package/README.md"
+        - "package/LICENSE"
+        - "package/CHANGELOG.md"
+        - "package/package.json"
+      exit_code: 0
+
+  - name: tarball does not include source TypeScript
+    shell: tar tzf /Users/yonatanzlit/mod8/mod8-0.1.0.tgz
+    expect:
+      stdout_omits:
+        - "package/src/"
+        - ".ts"
+        - "tsconfig"
+        - "node_modules"
+      exit_code: 0
+
+  - name: install in a fresh dir places the bin shim
+    setup:
+      - shell: |
+          cd $MOD8_CONFIG_DIR
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-0.1.0.tgz > /tmp/mod8-install.log 2>&1
+          test -x ./node_modules/.bin/mod8 || { echo "missing or non-exec bin"; cat /tmp/mod8-install.log; exit 1; }
+    shell: $MOD8_CONFIG_DIR/node_modules/.bin/mod8 --version
+    expect:
+      stdout_contains: "0.1.0"
+      exit_code: 0
+
+  - name: installed binary --help lists the new commands
+    setup:
+      - shell: |
+          cd $MOD8_CONFIG_DIR
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-0.1.0.tgz > /tmp/mod8-install.log 2>&1
+    shell: $MOD8_CONFIG_DIR/node_modules/.bin/mod8 --help
+    expect:
+      stdout_contains:
+        - mod8
+        - keys
+        - providers
+        - add-provider
+        - new
+        - resume
+        - verify
+        - "OpenAI-compatible"
+      exit_code: 0
+
+  - name: installed binary keys list shows all 9 built-in templates
+    setup:
+      - shell: |
+          cd $MOD8_CONFIG_DIR
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-0.1.0.tgz > /tmp/mod8-install.log 2>&1
+    shell: $MOD8_CONFIG_DIR/node_modules/.bin/mod8 keys list
+    expect:
+      stdout_contains:
+        - anthropic
+        - openai
+        - google
+        - deepseek
+        - mistral
+        - groq
+        - openrouter
+        - xai
+        - together
+
+  - name: installed binary --all in mock mode renders 3 blocks
+    setup:
+      - shell: |
+          cd $MOD8_CONFIG_DIR
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-0.1.0.tgz > /tmp/mod8-install.log 2>&1
+    shell: "MOD8_MOCK=1 MOD8_AUTO_CONFIRM=1 $MOD8_CONFIG_DIR/node_modules/.bin/mod8 --all 'say hi'"
+    expect:
+      stdout_contains:
+        - "Anthropic (Claude)"
+        - "OpenAI (GPT)"
+        - "Google (Gemini)"
+        - "3/3 ok"
+
+  - name: installed binary persists keys to providers.json (not legacy)
+    setup:
+      - shell: |
+          cd $MOD8_CONFIG_DIR
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-0.1.0.tgz > /tmp/mod8-install.log 2>&1
+      - shell: "echo 'sk-test-fresh-install' | $MOD8_CONFIG_DIR/node_modules/.bin/mod8 keys set anthropic"
+    shell: "true"
+    expect:
+      file_exists: "$MOD8_CONFIG_DIR/providers.json"
+      file_mode: "$MOD8_CONFIG_DIR/providers.json:600"

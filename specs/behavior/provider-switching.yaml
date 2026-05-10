@@ -1,0 +1,186 @@
+name: behavior — provider switching
+description: |
+  Tests what the user OBSERVES when they ask to switch providers.  Covers
+  routing (does "use codex" actually go to codex?), banner correctness (does
+  the banner reflect the real target?), and worker character (does the
+  switched-to provider stay in character or impersonate mod8 host?).
+
+  The chat REPL itself crashes on raw-mode in our sandbox, so these tests
+  exercise the same code paths via two non-Ink endpoints:
+    - mod8 dev:resolve <input>     → routing intent (no LLM)
+    - mod8 dev:work-ask <id> <p>   → work-mode system prompt + provider call
+
+tests:
+  - name: routing — "use codex" (custom display name) maps to openai
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "use codex"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+
+  - name: routing — "i want to talk with codex" (the exact phrasing that broke prod) routes
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "i want to talk with codex"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+
+  - name: routing — "i wanna chat with gpt" maps to openai
+    shell: 'mod8 dev:resolve "i wanna chat with gpt"'
+    expect:
+      stdout_contains: "route id=gpt resolved=openai"
+
+  - name: routing — "speak with grok" routes to xai
+    shell: 'mod8 dev:resolve "speak with grok"'
+    expect:
+      stdout_contains: "route id=grok resolved=xai"
+
+  - name: routing — "talk to mistral" routes to mistral
+    shell: 'mod8 dev:resolve "talk to mistral"'
+    expect:
+      stdout_contains: "route id=mistral resolved=mistral"
+
+  - name: routing — unknown provider returns null with no false positive
+    shell: 'mod8 dev:resolve "use thisproviderdoesnotexist"'
+    expect:
+      stdout_contains: "route id=thisproviderdoesnotexist resolved=null"
+
+  - name: routing — non-route plain text falls through cleanly
+    shell: 'mod8 dev:resolve "what is the weather today"'
+    expect:
+      stdout_contains: "none"
+
+  - name: 'routing — "lets me talk to codex" (no-apostrophe typo) still routes'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "lets me talk to codex"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+
+  - name: 'routing — "lets talk to grok" (lets without apostrophe) routes'
+    shell: 'mod8 dev:resolve "lets talk to grok"'
+    expect:
+      stdout_contains: "route id=grok resolved=xai"
+
+  - name: 'routing — "let me chat with claude" routes (canonical phrasing)'
+    shell: 'mod8 dev:resolve "let me chat with claude"'
+    expect:
+      stdout_contains: "route id=claude resolved=anthropic"
+
+  # --- WORK-MODE CHARACTER TESTS (LLM-driven) ---
+
+  - name: work — meta question is deferred back to host, not impersonated
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:work-ask anthropic "what providers do I have configured?"'
+    expect:
+      # Work mode must NOT pretend to know mod8 config — it should defer.
+      stdout_matches: "(?i)(handing back|hand.+back|mod8|host|/mod8)"
+      stdout_omits:
+        - "You have"
+        - "configured providers"
+
+  - name: work — concrete coding task is answered, not deferred
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:work-ask anthropic "write a one-line python lambda that doubles a number"'
+    expect:
+      # Real work happens — code shows up, no hand-off token.
+      stdout_contains: "lambda"
+      stdout_omits:
+        - "handing back"
+        - "<SWITCH_TO_HOST>"
+
+  - name: work — claude does not claim to be mod8 when asked
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:work-ask anthropic "who are you?"'
+    expect:
+      stdout_matches: "(?i)claude"
+      stdout_omits:
+        - "I am mod8"
+        - "I'm mod8"

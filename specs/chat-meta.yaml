@@ -1,0 +1,349 @@
+name: chat meta — mod8 knows itself
+description: |
+  Regression suite for "mod8 doesn't know mod8" bug.  The host system prompt
+  must include live data about the user's configured providers and the CLI's
+  feature surface, so meta questions get answered from facts — not pivoted
+  into "tell me about your project."
+
+  Tests use mod8 dev:host-ask, which runs a one-shot through the same host
+  system prompt the chat REPL uses.  All require a real Anthropic key.
+
+tests:
+  - name: meta — what is mod8
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "what is mod8?"'
+    expect:
+      stdout_contains:
+        - mod8
+      stdout_matches: "(BYOK|provider|terminal)"
+
+  - name: meta — what platforms are connected
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake-test-not-called",
+              "apiType": "openai-compat",
+              "name": "OpenAI (GPT)",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "what platforms are connected to you right now?"'
+    expect:
+      # Accept either provider ids ("anthropic", "openai") or display names
+      # ("Anthropic", "OpenAI"/"GPT") — the host may use either.
+      stdout_matches: "(?i)(anthropic|claude)"
+      stdout_contains:
+        - "configured"
+
+  - name: meta — user's custom display name is recognized
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake-test-not-called",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "what is codex?"'
+    expect:
+      stdout_contains:
+        - codex
+      stdout_matches: "(openai|gpt|provider)"
+      stdout_omits:
+        - "tell me about your project"
+        - "what is your project"
+
+  - name: meta — how do I add a new provider
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "how do I add a new provider?"'
+    expect:
+      stdout_contains:
+        - "add-provider"
+
+  - name: meta — what models do I have
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "deepseek": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "DeepSeek",
+              "baseUrl": "https://api.deepseek.com",
+              "defaultModel": "deepseek-chat",
+              "color": "#3B82F6"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "what models do I have available?"'
+    expect:
+      stdout_contains:
+        - claude-sonnet-4-6
+        - deepseek-chat
+
+  - name: meta — what can you do mentions key features
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "what can you do?"'
+    expect:
+      stdout_contains:
+        - mod8
+      stdout_matches: "(compare|chat|provider|--all)"
+
+  - name: meta — empty provider list is acknowledged honestly
+    requires_api_key: true
+    shell: 'mod8 dev:host-ask "what providers are configured?"'
+    expect:
+      stdout_matches: "(?i)(none|no providers|nothing|not configured|empty|haven't)"
+
+  - name: meta — does NOT pivot to user's project on bare meta question
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "what is this?"'
+    expect:
+      stdout_contains: mod8
+      stdout_omits:
+        - "tell me about your project"
+        - "what are you building"
+
+  - name: meta — typo'd "operator" phrasing still recognized
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    # The exact user-reported phrasing that triggered the original bug.
+    shell: 'mod8 dev:host-ask "hi how many operator you connect 2 ?"'
+    expect:
+      stdout_contains:
+        - "2"
+      stdout_omits:
+        - "I don't have info"
+        - "I don't have details"
+        - "tell me about your project"
+        - "what are you building"
+
+  - name: meta — never says "I don't have details about my setup"
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "what is powering you?"'
+    expect:
+      stdout_omits:
+        - "I don't have info"
+        - "I don't have details"
+        - "what's powering me"
+
+  # ------------------------------------------------------------
+  # Routing / synonym tests — deterministic, no LLM involved.
+  # Use mod8 dev:resolve, which runs the chat REPL's
+  # parseProviderRoute + resolveProviderHint and prints the result.
+  # ------------------------------------------------------------
+
+  - name: routing — "use deepseek" matches and resolves to deepseek
+    shell: 'mod8 dev:resolve "use deepseek"'
+    expect:
+      stdout_contains: "route id=deepseek resolved=deepseek"
+
+  - name: routing — "let me talk to gpt" maps to openai
+    shell: 'mod8 dev:resolve "let me talk to gpt"'
+    expect:
+      stdout_contains: "route id=gpt resolved=openai"
+
+  - name: routing — "talk to claude" maps to anthropic
+    shell: 'mod8 dev:resolve "talk to claude"'
+    expect:
+      stdout_contains: "route id=claude resolved=anthropic"
+
+  - name: routing — display-name match resolves to canonical id
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "let me talk to codex"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+
+  - name: 'routing — "ask grok: <prompt>" carries the rest payload'
+    shell: 'mod8 dev:resolve "ask grok: what is the weather"'
+    expect:
+      stdout_contains: "route id=grok resolved=xai"
+      stdout_matches: 'rest="what is the weather"'
+
+  - name: routing — "switch over to mistral" matches
+    shell: 'mod8 dev:resolve "switch over to mistral"'
+    expect:
+      stdout_contains: "route id=mistral resolved=mistral"
+
+  - name: routing — non-route input falls through cleanly
+    shell: 'mod8 dev:resolve "what is the weather today"'
+    expect:
+      stdout_contains: "none"
+
+  - name: 'routing — "compare all: <prompt>" extracts payload'
+    shell: 'mod8 dev:resolve "compare all: write a haiku"'
+    expect:
+      stdout_matches: 'compare payload="write a haiku"'
+
+  - name: 'routing — "/compare <prompt>" extracts payload'
+    shell: 'mod8 dev:resolve "/compare write a haiku"'
+    expect:
+      stdout_matches: 'compare payload="write a haiku"'
+
+  - name: routing — bare "compare all" is recognized
+    shell: 'mod8 dev:resolve "compare all"'
+    expect:
+      stdout_contains: "compare-bare"
+
+  - name: routing — unknown id resolves to null
+    shell: 'mod8 dev:resolve "use unknownprovider"'
+    expect:
+      stdout_contains: "route id=unknownprovider resolved=null"
+
+  - name: routing — display-name "Anthropic (Claude)" resolves
+    shell: 'mod8 dev:resolve "use anthropic"'
+    expect:
+      stdout_contains: "route id=anthropic resolved=anthropic"

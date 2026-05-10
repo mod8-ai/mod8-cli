@@ -1,0 +1,115 @@
+name: behavior — host doesn't lie about provider switches
+description: |
+  The bug we shipped: host LLM said "switching you to codex" but the
+  banner correctly showed "switching to claude" because <SWITCH_TO_WORK>
+  always lands on the default work model (claude).  The user saw two
+  contradictory things and lost trust.
+
+  Fix: tighten the host system prompt so it NEVER claims to switch to
+  a non-claude provider via the token.  These tests assert the host
+  behavior on inputs that previously triggered the lie.
+
+tests:
+  - name: host — naming a non-claude provider does NOT trigger fake "switching to X"
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    # Note: the CLI's intent matcher already routes "use codex" / "talk with codex"
+    # directly, so dev:host-ask only sees this prompt if we send it raw — which
+    # is what dev:host-ask does. The host MUST NOT claim to switch to codex.
+    shell: 'mod8 dev:host-ask "switching to codex now please"'
+    expect:
+      # Host either tells the user the right phrasing, or hands off to claude
+      # — but NEVER claims "switching to codex" itself.
+      stdout_omits:
+        - "Switching you to codex"
+        - "switching to codex now"
+        - "I'll switch you to codex"
+
+  - name: host — "i want gpt" tells user the right phrasing instead of fake-switching
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "i want gpt"'
+    expect:
+      # Either suggests "use codex" / "use openai" / etc, OR hands off to claude.
+      stdout_matches: "(?i)(use\\s+(codex|openai|gpt)|talk\\s+(to|with)\\s+(codex|openai|gpt)|claude)"
+      stdout_omits:
+        - "Switching you to gpt"
+        - "Switching you to codex"
+
+  - name: host — generic "let's go" handoff is plain claude, no other provider names
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "ok let''s go"'
+    expect:
+      # When a plain handoff fires, the spoken text shouldn't promise codex/openai.
+      stdout_omits:
+        - "to codex"
+        - "to openai"
+        - "to gpt"
+        - "to grok"

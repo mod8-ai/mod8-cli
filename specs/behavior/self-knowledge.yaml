@@ -1,0 +1,119 @@
+name: behavior — mod8 has self-knowledge from configured state
+description: |
+  Tests that the host's answers to meta questions reference the user's
+  ACTUAL configured providers (not generic "I don't know" answers).  This
+  is the regression suite for the "mod8 doesn't know mod8" bug.
+
+  Each test seeds providers.json with realistic state, asks a meta
+  question via mod8 dev:host-ask, and asserts the response references
+  the configured provider names / ids / models.
+
+tests:
+  - name: with custom-named openai, "what providers" lists "codex"
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "what providers do I have?"'
+    expect:
+      stdout_matches:
+        - "(?i)codex"
+        - "(?i)(anthropic|claude)"
+
+  - name: '"how many operators" answers with the right count (2)'
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "how many operators are you connected to?"'
+    expect:
+      stdout_contains: "2"
+      stdout_omits:
+        - "I don't have"
+        - "tell me about your project"
+
+  - name: with 3 providers, host enumerates them all
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "$ANTHROPIC_API_KEY",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            },
+            "deepseek": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "DeepSeek",
+              "baseUrl": "https://api.deepseek.com",
+              "defaultModel": "deepseek-chat",
+              "color": "#3B82F6"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:host-ask "list all my providers"'
+    expect:
+      stdout_matches:
+        - "(?i)(anthropic|claude)"
+        - "(?i)codex"
+        - "(?i)deepseek"
+
+  - name: empty config — host says so, doesn't pretend
+    requires_api_key: true
+    shell: 'mod8 dev:host-ask "what platforms are connected?"'
+    expect:
+      stdout_matches: "(?i)(none|nothing|no providers|0 configured|not configured|empty|haven't)"

@@ -1,0 +1,49 @@
+name: behavior — auto-fallback after consecutive work errors
+description: |
+  When the work-mode provider keeps failing, mod8 should auto-fallback to
+  host so the user is never trapped.  The DECISION (warn vs fallback) is a
+  pure function in src/commands/intentRouting.ts: fallbackDecision(count).
+  These tests pin the threshold and the warn/fallback transition.
+
+  The runtime side of the fix (chat.tsx incrementing the counter on each
+  error, calling fallbackDecision, and switching modes) is covered by code
+  review — driving 3 consecutive turns through Ink would require a real PTY,
+  which the verify sandbox doesn't have.  The pure decision function is the
+  load-bearing piece and IS verifiable here.
+
+tests:
+  - name: 0 errors → ok (no banner, nothing to do)
+    shell: 'mod8 dev:check-fallback 0'
+    expect:
+      stdout_contains: "decision=ok"
+
+  - name: 1 error → warn (suggest switch-back, don't force)
+    shell: 'mod8 dev:check-fallback 1'
+    expect:
+      stdout_contains: "decision=warn"
+
+  - name: 2 errors → still warn (one shy of threshold)
+    shell: 'mod8 dev:check-fallback 2'
+    expect:
+      stdout_contains: "decision=warn"
+
+  - name: 3 errors → fallback (auto-switch to host)
+    shell: 'mod8 dev:check-fallback 3'
+    expect:
+      stdout_contains: "decision=fallback"
+
+  - name: 4+ errors → still fallback (decision is monotonic past threshold)
+    shell: 'mod8 dev:check-fallback 7'
+    expect:
+      stdout_contains: "decision=fallback"
+
+  - name: threshold is published as 3 (don't lower it without thinking)
+    shell: 'mod8 dev:check-fallback 0'
+    expect:
+      stdout_contains: "threshold=3"
+
+  - name: negative count is rejected
+    shell: 'mod8 dev:check-fallback -1'
+    expect:
+      stderr_contains: "non-negative"
+      exit_code: 1

@@ -1,0 +1,148 @@
+name: chat startup behavior
+description: |
+  Bare `mod8` opens a NEW chat session, not the most-recent one.  Resume is
+  explicit — `mod8 resume` (no args) for most-recent, `mod8 resume <id>` for a
+  specific session.
+
+  Drives the CLI through piped stdin so Ink crashes on raw-mode entry, but
+  whatever printed BEFORE the crash is captured for assertion.  In particular,
+  the "resuming session …" line is printed by runChat() before render(),
+  so its presence/absence is observable even without a real PTY.
+
+tests:
+  - name: bare mod8 with prior sessions does NOT resume
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-prev.json <<JSON
+          {
+            "version": 1,
+            "id": "2026-05-07-prev",
+            "title": "old session about something",
+            "createdAt": 1715000000000,
+            "lastActivity": 1715000000000,
+            "messages": [
+              {"role": "user", "content": "remember the keyword fuchsia", "mode": "host"},
+              {"role": "assistant", "content": "got it, fuchsia.", "mode": "host"}
+            ]
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-prev.json
+    repl:
+      run: mod8
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      # Welcome banner must show, but the resuming-session line must NOT.
+      stdout_contains:
+        - "switch to claude"
+      stdout_omits:
+        - "resuming session"
+        - "fuchsia"
+        - "old session about something"
+
+  - name: mod8 new also opens a fresh session (no resume line)
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-prev.json <<JSON
+          {
+            "version": 1,
+            "id": "2026-05-07-prev",
+            "title": "old",
+            "createdAt": 1715000000000,
+            "lastActivity": 1715000000000,
+            "messages": [
+              {"role": "user", "content": "x", "mode": "host"},
+              {"role": "assistant", "content": "y", "mode": "host"}
+            ]
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-prev.json
+    repl:
+      run: mod8 new
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stdout_contains:
+        - "switch to claude"
+      stdout_omits:
+        - "resuming session"
+
+  - name: mod8 resume (no id) resumes the most recent session
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-prev.json <<JSON
+          {
+            "version": 1,
+            "id": "2026-05-07-prev",
+            "title": "the recent session",
+            "createdAt": 1715000000000,
+            "lastActivity": 1715000000000,
+            "messages": [
+              {"role": "user", "content": "x", "mode": "host"},
+              {"role": "assistant", "content": "y", "mode": "host"}
+            ]
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-prev.json
+    repl:
+      run: mod8 resume
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stdout_contains:
+        - "resuming session 2026-05-07-prev"
+
+  - name: mod8 resume on empty store is rejected, not silently new
+    repl:
+      run: mod8 resume
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stderr_contains:
+        - "no sessions to resume"
+        - "mod8 list"
+      exit_code: 1
+
+  - name: mod8 resume <id> still works
+    requires_api_key: true
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sessions
+          cat > $MOD8_CONFIG_DIR/sessions/2026-05-07-spec.json <<JSON
+          {
+            "version": 1,
+            "id": "2026-05-07-spec",
+            "title": "specific",
+            "createdAt": 1715000000000,
+            "lastActivity": 1715000000000,
+            "messages": [
+              {"role": "user", "content": "marker fuchsia-bytemark", "mode": "host"},
+              {"role": "assistant", "content": "noted", "mode": "host"}
+            ]
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/sessions/2026-05-07-spec.json
+    repl:
+      run: mod8 resume 2026-05-07-spec
+      timeout_ms: 6000
+      inputs:
+        - send: ""
+          delay_ms: 1500
+    expect:
+      stdout_contains:
+        - "resuming session 2026-05-07-spec"
+        - "marker fuchsia-bytemark"

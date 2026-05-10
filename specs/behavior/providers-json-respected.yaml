@@ -1,0 +1,106 @@
+name: behavior — providers.json defaultModel reaches the SDK URL
+description: |
+  Bug confirmation: when the user wrote "gemini-2.5-flash" in
+  providers.json's defaultModel field, mod8 was supposed to pass that
+  exact value to the Google SDK.  The dead code in src/providers/google.ts
+  hard-coded gemini-2.0-flash which made it look like there was a swap;
+  the real path in generic.ts already used entry.defaultModel, but no
+  tests proved it end-to-end.
+
+  These specs lock in the contract: whatever string the user puts in
+  providers.json is what reaches the provider URL.  No allowlist, no
+  silent substitution, no fallback to a built-in default.
+
+tests:
+  - name: 'providers.json defaultModel is used when no env override'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {
+              "apiKey": "x",
+              "apiType": "gemini",
+              "name": "Google (Gemini)",
+              "defaultModel": "gemini-2.5-flash",
+              "color": "#06B6D4"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve-model google'
+    expect:
+      stdout_contains:
+        - 'model="gemini-2.5-flash"'
+        - 'source=providers.json'
+
+  - name: 'providers.json model passes through to the SDK URL'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {
+              "apiKey": "AIzaSy-FAKE-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAAA",
+              "apiType": "gemini",
+              "name": "Google (Gemini)",
+              "defaultModel": "gemini-2.5-flash",
+              "color": "#06B6D4"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:debug-call google'
+    expect:
+      stdout_contains:
+        - 'model="gemini-2.5-flash"'
+        - 'modelSource=providers.json'
+        # The exact SDK URL — not a hint, not a placeholder.
+        - 'models/gemini-2.5-flash:streamGenerateContent'
+
+  - name: 'arbitrary user-chosen model name is preserved in the URL (no allowlist)'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {
+              "apiKey": "AIzaSy-FAKE-NOT-REAL-AAAAAAAAAAAAAAAAAAAAAAA",
+              "apiType": "gemini",
+              "name": "Google (Gemini)",
+              "defaultModel": "gemini-3.0-experimental-future-model",
+              "color": "#06B6D4"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:debug-call google'
+    expect:
+      stdout_contains:
+        # Whatever the user wrote — even something that doesn't exist yet —
+        # appears in the SDK URL.  No allowlist, no substitution.
+        - 'models/gemini-3.0-experimental-future-model'
+        - 'model="gemini-3.0-experimental-future-model"'
+
+  - name: 'openai-compat custom baseUrl + custom model both reach the URL'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "deepseek": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "DeepSeek",
+              "baseUrl": "https://api.deepseek.com",
+              "defaultModel": "deepseek-reasoner-some-future-variant",
+              "color": "#3B82F6"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'MOD8_DEBUG=1 mod8 dev:resolve-model deepseek'
+    expect:
+      stdout_contains:
+        - 'model="deepseek-reasoner-some-future-variant"'
+        - 'source=providers.json'

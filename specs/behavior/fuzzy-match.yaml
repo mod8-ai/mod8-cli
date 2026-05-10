@@ -1,0 +1,208 @@
+name: behavior — fuzzy-match provider typos
+description: |
+  When the user types a near-typo of a configured provider, mod8 fuzzy-
+  matches it instead of erroring out.  Levenshtein distance ≤ 2 against
+  configured ids, display names, built-in template ids, and the curated
+  HIGH_CONFIDENCE_BRAND_ALIASES.
+
+  Distance rules (set to keep the false-positive rate low):
+    - distance ≤ 1     → auto-route
+    - distance == 2    → auto-route, UNLESS the input is exactly 4 chars,
+                          in which case ASK FIRST ("did you mean X?")
+    - input length < 4 → no fuzzy at all (avoids "go" / "ok" / "xyz" misfires)
+    - affirmative/negative tokens ("yes", "no", "go") → no fuzzy
+
+  Multiple matches → list and ask.  Zero matches → fall through silently.
+
+tests:
+  - name: 'distance-1 typo "gimini" auto-routes to google'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {"apiKey":"x","apiType":"gemini","name":"Google (Gemini)","defaultModel":"gemini-2.0-flash","color":"#06B6D4"},
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      gimini
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="gimini" mode=work provider=google action=fuzzy-route id=google distance=1'
+
+  - name: 'distance-2 typo "gomoni" still auto-routes (length 6 > 4)'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {"apiKey":"x","apiType":"gemini","name":"Google (Gemini)","defaultModel":"gemini-2.0-flash","color":"#06B6D4"},
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      gomoni
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="gomoni" mode=work provider=google action=fuzzy-route id=google distance=2'
+
+  - name: 'verb-form typo "use anthopic" auto-routes'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      use anthopic
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="use anthopic" mode=work provider=anthropic action=fuzzy-route id=anthropic distance=1'
+
+  - name: 'short distance-2 typo "clad" ASKs first instead of routing'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      clad
+      yes
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="clad" mode=host provider=host action=fuzzy-ask id=anthropic'
+        # User confirms → switches.
+        - 'step=2 input="yes" mode=work provider=anthropic action=fuzzy-confirmed id=anthropic'
+
+  - name: 'fuzzy-ask cancellation via "no" leaves us in host mode'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      clad
+      no
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="clad" mode=host provider=host action=fuzzy-ask id=anthropic'
+        - 'step=2 input="no" mode=host provider=host action=fuzzy-cancelled'
+
+  - name: 'short input ("go" / "ok" / "xyz" / "ant") never triggers fuzzy'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"},
+            "google": {"apiKey":"x","apiType":"gemini","name":"Google (Gemini)","defaultModel":"gemini-2.0-flash","color":"#06B6D4"},
+            "xai": {"apiKey":"x","apiType":"openai-compat","name":"xAI (Grok)","baseUrl":"https://api.x.ai/v1","defaultModel":"grok-2-latest","color":"#6B7280"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      go
+      ok
+      xyz
+      ant
+      yo
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="go" mode=host provider=host action=send'
+        - 'step=2 input="ok" mode=host provider=host action=send'
+        - 'step=3 input="xyz" mode=host provider=host action=send'
+        - 'step=4 input="ant" mode=host provider=host action=send'
+        - 'step=5 input="yo" mode=host provider=host action=send'
+      stdout_omits:
+        - 'fuzzy-route'
+        - 'fuzzy-ask'
+
+  - name: 'common english words near providers do not trigger fuzzy'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      what
+      this
+      that
+      with
+      from
+      have
+      INPUTS
+    expect:
+      stdout_omits:
+        - 'fuzzy-route'
+        - 'fuzzy-ask'
+
+  - name: 'fuzzy on bare greeting "hi gimini" routes + carries "hi" as rest'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "google": {"apiKey":"x","apiType":"gemini","name":"Google (Gemini)","defaultModel":"gemini-2.0-flash","color":"#06B6D4"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      hi gimini
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="hi gimini" mode=work provider=google action=fuzzy-route id=google distance=1 rest="hi"'
+
+  - name: 'no fuzzy match for word with no near-provider → falls through silently'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      hippopotamus
+      refrigerator
+      INPUTS
+    expect:
+      stdout_contains:
+        - 'step=1 input="hippopotamus" mode=host provider=host action=send'
+        - 'step=2 input="refrigerator" mode=host provider=host action=send'
+      stdout_omits:
+        - 'fuzzy-'

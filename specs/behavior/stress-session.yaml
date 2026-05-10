@@ -1,0 +1,226 @@
+name: behavior — stress test (long realistic session)
+description: |
+  Simulates a 25-input session that hits 5 configured providers (anthropic,
+  openai/codex, deepseek, mistral, xai/grok) using mixed natural phrasings
+  the user actually types: bare names, greetings, "use X", "talk with X",
+  "let me chat with X", "i wanna talk with X", first-word + rest, "back",
+  "mod8", "/mod8", "@mod8".
+
+  Each input is fed through dev:simulate which applies the same routing
+  state machine the chat REPL uses.  We assert the action and final
+  (mode, provider) for every step, so any drift in routing — silent
+  no-routing, wrong provider, banner-vs-text mismatch via stuck workId,
+  or false positives — fails the suite.
+
+tests:
+  - name: 25-input session — 5 providers, mixed phrasings, no stuck states
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "sk-fake-ant",
+              "apiType": "anthropic",
+              "name": "Anthropic (Claude)",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#A78BFA"
+            },
+            "openai": {
+              "apiKey": "sk-fake-oai",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            },
+            "deepseek": {
+              "apiKey": "sk-fake-ds",
+              "apiType": "openai-compat",
+              "name": "DeepSeek",
+              "baseUrl": "https://api.deepseek.com",
+              "defaultModel": "deepseek-chat",
+              "color": "#3B82F6"
+            },
+            "mistral": {
+              "apiKey": "sk-fake-mi",
+              "apiType": "openai-compat",
+              "name": "Mistral",
+              "baseUrl": "https://api.mistral.ai/v1",
+              "defaultModel": "mistral-large-latest",
+              "color": "#EF4444"
+            },
+            "xai": {
+              "apiKey": "sk-fake-xai",
+              "apiType": "openai-compat",
+              "name": "xAI (Grok)",
+              "baseUrl": "https://api.x.ai/v1",
+              "defaultModel": "grok-2-latest",
+              "color": "#6B7280"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      hi
+      codex
+      hello
+      mod8
+      use grok
+      tell me about JS
+      back
+      let me chat with deepseek
+      hello
+      switch to mistral
+      please continue
+      /mod8
+      i wanna talk with codex
+      hi
+      back to mod8
+      claude please
+      thanks
+      /mod8
+      talk with grok
+      hello there
+      gpt help me
+      mod8
+      hi mistral
+      yo
+      switch back
+      INPUTS
+    expect:
+      stdout_contains:
+        # Step 1: bare "hi" in host → send (greeting host)
+        - 'step=1 input="hi" mode=host provider=host action=send'
+        # Step 2: "codex" routes via bare-name → openai (custom display)
+        - 'step=2 input="codex" mode=work provider=openai action=route-bare'
+        # Step 3: "hello" in work/codex → send (chat with codex)
+        - 'step=3 input="hello" mode=work provider=openai action=send'
+        # Step 4: "mod8" → host-back, workId reset to anthropic
+        - 'step=4 input="mod8" mode=host provider=host action=host-back'
+        # Step 5: "use grok" → xai (configured)
+        - 'step=5 input="use grok" mode=work provider=xai action=route'
+        # Step 6: "tell me about JS" in work/xai → send
+        - 'step=6 input="tell me about JS" mode=work provider=xai action=send'
+        # Step 7: "back" → host-back (resets workId)
+        - 'step=7 input="back" mode=host provider=host action=host-back'
+        # Step 8: "let me chat with deepseek" → deepseek
+        - 'step=8 input="let me chat with deepseek" mode=work provider=deepseek action=route'
+        # Step 9: "hello" → send to deepseek
+        - 'step=9 input="hello" mode=work provider=deepseek action=send'
+        # Step 10: "switch to mistral" → mistral
+        - 'step=10 input="switch to mistral" mode=work provider=mistral action=route'
+        # Step 11: "please continue" → send to mistral
+        - 'step=11 input="please continue" mode=work provider=mistral action=send'
+        # Step 12: "/mod8" → host-back from work
+        - 'step=12 input="/mod8" mode=host provider=host action=host-back'
+        # Step 13: "i wanna talk with codex" → openai (typo-tolerant + synonym/display-name)
+        - 'step=13 input="i wanna talk with codex" mode=work provider=openai action=route'
+        # Step 14: "hi" → send to codex
+        - 'step=14 input="hi" mode=work provider=openai action=send'
+        # Step 15: "back to mod8" → host-back
+        - 'step=15 input="back to mod8" mode=host provider=host action=host-back'
+        # Step 16: "claude please" → anthropic via high-confidence brand alias
+        - 'step=16 input="claude please" mode=work provider=anthropic action=route-bare'
+        # Step 17: "thanks" → send to anthropic
+        - 'step=17 input="thanks" mode=work provider=anthropic action=send'
+        # Step 18: "/mod8" → host-back from anthropic, workId reset
+        - 'step=18 input="/mod8" mode=host provider=host action=host-back'
+        # Step 19: "talk with grok" → xai
+        - 'step=19 input="talk with grok" mode=work provider=xai action=route'
+        # Step 20: "hello there" → send to xai (greeting + non-provider word, falls through)
+        - 'step=20 input="hello there" mode=work provider=xai action=send'
+        # Step 21: "gpt help me" → openai (high-confidence first-word)
+        - 'step=21 input="gpt help me" mode=work provider=openai action=route-bare'
+        # Step 22: "mod8" → host-back, workId reset
+        - 'step=22 input="mod8" mode=host provider=host action=host-back'
+        # Step 23: "hi mistral" → mistral via greeting (full resolution)
+        - 'step=23 input="hi mistral" mode=work provider=mistral action=route-greeting'
+        # Step 24: "yo" alone → send (yo isn't a provider)
+        - 'step=24 input="yo" mode=work provider=mistral action=send'
+        # Step 25: "switch back" → host-back, workId reset
+        - 'step=25 input="switch back" mode=host provider=host action=host-back'
+
+  - name: 'workProviderId resets after host-back, so SWITCH_TO_WORK lands on default'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"},
+            "openai": {"apiKey":"x","apiType":"openai-compat","name":"codex","baseUrl":"https://api.openai.com/v1","defaultModel":"gpt-4o","color":"#10B981"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      use codex
+      hi
+      mod8
+      use codex
+      mod8
+      INPUTS
+    expect:
+      stdout_contains:
+        # After host-back, provider=host (workId reset to anthropic, but mode=host shows "host")
+        - 'step=3 input="mod8" mode=host provider=host action=host-back'
+        # Re-routing to codex still works
+        - 'step=4 input="use codex" mode=work provider=openai action=route'
+        # Final mod8 → back to host
+        - 'step=5 input="mod8" mode=host provider=host action=host-back'
+
+  - name: false-positive avoidance — common english words near providers
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      write me a haiku
+      hello world
+      tell me about sonnet form
+      can you write opus?
+      llama farm
+      INPUTS
+    expect:
+      stdout_contains:
+        # haiku/sonnet/opus/llama are ambiguous synonyms — strict mode
+        # rejects them, so all of these stay in host mode as send actions.
+        - 'step=1 input="write me a haiku" mode=host provider=host action=send'
+        - 'step=2 input="hello world" mode=host provider=host action=send'
+        - 'step=3 input="tell me about sonnet form" mode=host provider=host action=send'
+        - 'step=4 input="can you write opus?" mode=host provider=host action=send'
+        - 'step=5 input="llama farm" mode=host provider=host action=send'
+
+  - name: host-back no-op when already in host (does NOT send /mod8 to LLM)
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {"apiKey":"x","apiType":"anthropic","name":"Anthropic (Claude)","defaultModel":"claude-sonnet-4-6","color":"#A78BFA"}
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: |
+      mod8 dev:simulate <<'INPUTS'
+      /mod8
+      @mod8
+      back
+      back to mod8
+      switch back
+      INPUTS
+    expect:
+      stdout_contains:
+        # All host-back patterns in host mode → no-op (NOT send)
+        - 'step=1 input="/mod8" mode=host provider=host action=host-back-noop'
+        - 'step=2 input="@mod8" mode=host provider=host action=host-back-noop'
+        - 'step=3 input="back" mode=host provider=host action=host-back-noop'
+        - 'step=4 input="back to mod8" mode=host provider=host action=host-back-noop'
+        - 'step=5 input="switch back" mode=host provider=host action=host-back-noop'

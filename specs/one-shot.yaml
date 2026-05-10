@@ -1,0 +1,65 @@
+name: one-shot prompts
+description: -c / -o / -g / default prompt with mocked providers
+
+tests:
+  - name: -c routes to anthropic with stats footer
+    shell: "MOD8_MOCK=1 mod8 -c 'hi'"
+    expect:
+      stdout_contains:
+        - "claude-sonnet-4-6"
+        - "tok ·"
+      exit_code: 0
+
+  - name: -o routes to openai
+    shell: "MOD8_MOCK=1 mod8 -o 'hi'"
+    expect:
+      stdout_contains:
+        - gpt-4o
+        - "tok ·"
+      exit_code: 0
+
+  - name: -g routes to gemini
+    shell: "MOD8_MOCK=1 mod8 -g 'hi'"
+    expect:
+      stdout_contains:
+        - "gemini-2.0-flash"
+        - "tok ·"
+      exit_code: 0
+
+  - name: default (no flag) routes to anthropic
+    shell: "MOD8_MOCK=1 mod8 'hi'"
+    expect:
+      stdout_contains: "claude-sonnet-4-6"
+
+  - name: multiple provider flags rejected
+    shell: "MOD8_MOCK=1 mod8 -c -o 'hi'"
+    expect:
+      stderr_contains: "Cannot use multiple provider flags"
+      exit_code: 1
+
+  - name: missing key error is friendly (real path)
+    shell: 'unset ANTHROPIC_API_KEY; mod8 -c "test"'
+    expect:
+      stderr_contains:
+        - "Anthropic"
+        - "key configured"
+        - "mod8 keys set anthropic"
+      exit_code: 1
+
+  - name: invalid key error is friendly (mocked 401)
+    shell: "MOD8_MOCK=1 MOD8_MOCK_ERROR=401 mod8 -c 'hi'"
+    expect:
+      stderr_contains: "invalid API key"
+      exit_code: 1
+
+  - name: rate limit error is friendly (mocked 429)
+    shell: "MOD8_MOCK=1 MOD8_MOCK_ERROR=429 mod8 -c 'hi'"
+    expect:
+      stderr_contains: "rate limited"
+      exit_code: 1
+
+  - name: network error is friendly
+    shell: "MOD8_MOCK=1 MOD8_MOCK_ERROR=network mod8 -c 'hi'"
+    expect:
+      stderr_contains: "network error"
+      exit_code: 1

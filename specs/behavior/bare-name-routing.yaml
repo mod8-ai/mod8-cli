@@ -1,0 +1,223 @@
+name: behavior — bare name & greeting routing
+description: |
+  Pins the fix for "user names a provider but mod8 only lectures" — the
+  intent router now catches:
+    - bare provider name        ("codex")
+    - first word + remainder    ("codex tell me a joke")
+    - greeting + name           ("hi codex", "hey gpt how are you")
+  …all locally, before the host LLM gets a chance to lecture.
+
+  Strict resolution (id or configured display-name only) for bare/first-word
+  prevents false positives like "haiku" or "claude alone is great".  Greeting
+  matching is more permissive because the greeting itself signals intent.
+
+tests:
+  # --- bare name ---
+
+  - name: 'bare "codex" (configured display name) routes to openai'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "codex"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+
+  - name: 'bare "Codex" (capitalized) is case-insensitive'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "Codex"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+
+  - name: 'bare built-in id "deepseek" routes (even when not configured)'
+    shell: 'mod8 dev:resolve "deepseek"'
+    expect:
+      stdout_contains: "route id=deepseek resolved=deepseek"
+
+  # --- first-word + rest ---
+
+  - name: '"codex tell me a joke" routes + carries rest="tell me a joke"'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "codex tell me a joke"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+      stdout_matches: 'rest="tell me a joke"'
+
+  - name: '"codex codex" switches once, sends "codex" as rest (no double-route)'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "codex codex"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+      stdout_matches: 'rest="codex"'
+
+  # --- greeting + name (full resolution including synonyms) ---
+
+  - name: '"hi codex" routes + forwards "hi" as the first message'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "hi codex"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+      stdout_matches: 'rest="hi"'
+
+  - name: '"hey codex how are you" routes + forwards "hey how are you"'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-fake",
+              "apiType": "openai-compat",
+              "name": "codex",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 dev:resolve "hey codex how are you"'
+    expect:
+      stdout_contains: "route id=codex resolved=openai"
+      stdout_matches: 'rest="hey how are you"'
+
+  - name: '"yo gpt" routes via greeting + synonym (gpt → openai)'
+    shell: 'mod8 dev:resolve "yo gpt"'
+    expect:
+      stdout_contains: "route id=gpt resolved=openai"
+      stdout_matches: 'rest="yo"'
+
+  - name: '"hello claude" routes via greeting + synonym (claude → anthropic)'
+    shell: 'mod8 dev:resolve "hello claude"'
+    expect:
+      stdout_contains: "route id=claude resolved=anthropic"
+
+  # --- false-positive avoidance ---
+
+  - name: 'bare "haiku" does NOT route (synonym, but bare-mode is strict)'
+    shell: 'mod8 dev:resolve "haiku"'
+    expect:
+      stdout_contains: "none"
+
+  - name: 'bare "claude" routes to anthropic (high-confidence brand alias)'
+    shell: 'mod8 dev:resolve "claude"'
+    expect:
+      stdout_contains: "route id=claude resolved=anthropic"
+
+  - name: 'bare "gpt" routes to openai (high-confidence brand alias)'
+    shell: 'mod8 dev:resolve "gpt"'
+    expect:
+      stdout_contains: "route id=gpt resolved=openai"
+
+  - name: 'bare "grok" routes to xai (high-confidence brand alias)'
+    shell: 'mod8 dev:resolve "grok"'
+    expect:
+      stdout_contains: "route id=grok resolved=xai"
+
+  - name: '"claude please" routes + carries rest="please"'
+    shell: 'mod8 dev:resolve "claude please"'
+    expect:
+      stdout_contains: "route id=claude resolved=anthropic"
+      stdout_matches: 'rest="please"'
+
+  - name: '"gpt help me with this" routes + carries rest'
+    shell: 'mod8 dev:resolve "gpt help me with this"'
+    expect:
+      stdout_contains: "route id=gpt resolved=openai"
+      stdout_matches: 'rest="help me with this"'
+
+  - name: '"hello world" does NOT route ("world" is not a provider)'
+    shell: 'mod8 dev:resolve "hello world"'
+    expect:
+      stdout_contains: "none"
+
+  - name: '"hi there" does NOT route ("there" is not a provider)'
+    shell: 'mod8 dev:resolve "hi there"'
+    expect:
+      stdout_contains: "none"
+
+  - name: 'multi-word non-route message stays plain ("write me a haiku")'
+    shell: 'mod8 dev:resolve "write me a haiku"'
+    expect:
+      stdout_contains: "none"
+
+  # --- priority: host-back still wins over bare-name ---
+
+  - name: 'bare "mod8" goes to host-back, not provider routing'
+    shell: 'mod8 dev:resolve "mod8"'
+    expect:
+      stdout_contains: "host-back"
+      stdout_omits:
+        - "route id="

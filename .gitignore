@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment files
+.env
+.env.*
+frontend/.env.production
+
+# Secrets
+*.key
+*.pem
+
+# Firebase (if ever used)
+.firebase/
+.firebaserc
+firebase-debug.log
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# npm artifacts
+*.tgz
