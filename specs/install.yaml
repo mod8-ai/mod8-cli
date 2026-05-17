@@ -13,10 +13,10 @@ tests:
     setup:
       - shell: |
           cd /Users/yonatanzlit/mod8
-          rm -f mod8-cli-0.5.27.tgz
+          rm -f mod8-cli-0.5.28.tgz
           npm pack > /tmp/mod8-pack.log 2>&1
-          test -f mod8-cli-0.5.27.tgz || { cat /tmp/mod8-pack.log; exit 1; }
-    shell: tar tzf /Users/yonatanzlit/mod8/mod8-cli-0.5.27.tgz
+          test -f mod8-cli-0.5.28.tgz || { cat /tmp/mod8-pack.log; exit 1; }
+    shell: tar tzf /Users/yonatanzlit/mod8/mod8-cli-0.5.28.tgz
     expect:
       stdout_contains:
         - "package/bin/mod8.js"
@@ -31,7 +31,7 @@ tests:
       exit_code: 0
 
   - name: tarball does not include source TypeScript
-    shell: tar tzf /Users/yonatanzlit/mod8/mod8-cli-0.5.27.tgz
+    shell: tar tzf /Users/yonatanzlit/mod8/mod8-cli-0.5.28.tgz
     expect:
       stdout_omits:
         - "package/src/"
@@ -44,18 +44,18 @@ tests:
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.27.tgz > /tmp/mod8-install.log 2>&1
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.28.tgz > /tmp/mod8-install.log 2>&1
           test -x ./node_modules/.bin/mod8 || { echo "missing or non-exec bin"; cat /tmp/mod8-install.log; exit 1; }
     shell: $MOD8_CONFIG_DIR/node_modules/.bin/mod8 --version
     expect:
-      stdout_contains: "0.5.27"
+      stdout_contains: "0.5.28"
       exit_code: 0
 
   - name: installed binary --help lists the new commands
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.27.tgz > /tmp/mod8-install.log 2>&1
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.28.tgz > /tmp/mod8-install.log 2>&1
     shell: $MOD8_CONFIG_DIR/node_modules/.bin/mod8 --help
     expect:
       stdout_contains:
@@ -73,7 +73,7 @@ tests:
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.27.tgz > /tmp/mod8-install.log 2>&1
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.28.tgz > /tmp/mod8-install.log 2>&1
     shell: $MOD8_CONFIG_DIR/node_modules/.bin/mod8 keys list
     expect:
       stdout_contains:
@@ -91,7 +91,7 @@ tests:
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.27.tgz > /tmp/mod8-install.log 2>&1
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.28.tgz > /tmp/mod8-install.log 2>&1
     shell: "MOD8_MOCK=1 MOD8_AUTO_CONFIRM=1 $MOD8_CONFIG_DIR/node_modules/.bin/mod8 --all 'say hi'"
     expect:
       stdout_contains:
@@ -104,7 +104,7 @@ tests:
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.27.tgz > /tmp/mod8-install.log 2>&1
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.28.tgz > /tmp/mod8-install.log 2>&1
       - shell: "echo 'sk-test-fresh-install' | $MOD8_CONFIG_DIR/node_modules/.bin/mod8 keys set anthropic"
     shell: "true"
     expect:

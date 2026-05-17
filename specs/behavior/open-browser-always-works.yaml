@@ -1,0 +1,172 @@
+name: behavior — "open the browser" always works (client-side intercept)
+description: |
+  Regression context: in 0.5.27 we shipped the `open_url` tool plus system-
+  prompt hardening that told every model "never refuse open-the-browser
+  requests".  In practice the models still refused (DeepSeek every time,
+  Claude/Codex/Gemini intermittently).  No amount of system-prompt prose
+  was moving the needle — because the issue isn't really refusal, it's
+  that some adapters don't fire the tool reliably, and the model's recovery
+  message looks like a refusal to the user.
+
+  0.5.28 fix: stop relying on the model.  Detect open-browser phrasing on
+  the CLI input side, BEFORE the model is invoked, and execute the opener
+  directly.  Pattern detection (parseOpenBrowser) and URL resolution
+  (findRecentUrl) are pure functions and are pinned here.
+
+  These tests pin the parser itself.  The runtime side (chat.tsx calling
+  openInBrowser when parseOpenBrowser matches) is verified by code review
+  — driving Ink + a real browser launch through the verify sandbox would
+  need a PTY and would shell out to `open`, which isn't safe in CI.
+
+tests:
+  # ──────────────────────────────────────────────────────────────────
+  # PATTERN A: explicit URL after a verb — always trigger
+  # ──────────────────────────────────────────────────────────────────
+  - name: open <url> — bare verb + http url
+    shell: 'mod8 dev:open-browser-parse "open http://localhost:5173"'
+    expect:
+      stdout_contains: "intent=open url=http://localhost:5173"
+
+  - name: open <url> — bare verb + https url
+    shell: 'mod8 dev:open-browser-parse "open https://mod8.ai"'
+    expect:
+      stdout_contains: "intent=open url=https://mod8.ai"
+
+  - name: launch <url>
+    shell: 'mod8 dev:open-browser-parse "launch http://localhost:3000"'
+    expect:
+      stdout_contains: "intent=open url=http://localhost:3000"
+
+  - name: preview <url>
+    shell: 'mod8 dev:open-browser-parse "preview http://localhost:8080/about"'
+    expect:
+      stdout_contains: "intent=open url=http://localhost:8080/about"
+
+  - name: please open <url> with polite preamble
+    shell: 'mod8 dev:open-browser-parse "please open http://localhost:5173"'
+    expect:
+      stdout_contains: "intent=open url=http://localhost:5173"
+
+  - name: can you open <url> — polite question form
+    shell: 'mod8 dev:open-browser-parse "can you open https://example.com"'
+    expect:
+      stdout_contains: "intent=open url=https://example.com"
+
+  - name: trailing period on url is stripped
+    shell: 'mod8 dev:open-browser-parse "open http://localhost:5173."'
+    expect:
+      stdout_contains: "intent=open url=http://localhost:5173"
+
+  # ──────────────────────────────────────────────────────────────────
+  # PATTERN B: phrase mentions the browser, no URL — caller resolves
+  # ──────────────────────────────────────────────────────────────────
+  - name: open the browser
+    shell: 'mod8 dev:open-browser-parse "open the browser"'
+    expect:
+      stdout_contains: "intent=open url=null"
+
+  - name: open browser (no article)
+    shell: 'mod8 dev:open-browser-parse "open browser"'
+    expect:
+      stdout_contains: "intent=open url=null"
+
+  - name: launch the browser
+    shell: 'mod8 dev:open-browser-parse "launch the browser"'
+    expect:
+      stdout_contains: "intent=open url=null"
+
+  - name: fire up the browser
+    shell: 'mod8 dev:open-browser-parse "fire up the browser"'
+    expect:
+      stdout_contains: "intent=open url=null"
+
+  - name: open it in the browser
+    shell: 'mod8 dev:open-browser-parse "open it in the browser"'
+    expect:
+      stdout_contains: "intent=open url=null"
+
+  - name: show me in the browser
+    shell: 'mod8 dev:open-browser-parse "show me in the browser"'
+    expect:
+      stdout_contains: "intent=open url=null"
+
+  - name: preview this
+    shell: 'mod8 dev:open-browser-parse "preview this"'
+    expect:
+      stdout_contains: "intent=open url=null"
+
+  - name: preview it
+    shell: 'mod8 dev:open-browser-parse "preview it"'
+    expect:
+      stdout_contains: "intent=open url=null"
+
+  - name: preview the app
+    shell: 'mod8 dev:open-browser-parse "preview the app"'
+    expect:
+      stdout_contains: "intent=open url=null"
+
+  # ──────────────────────────────────────────────────────────────────
+  # MUST NOT MATCH: false positives that would shadow real work
+  # ──────────────────────────────────────────────────────────────────
+  - name: open the file — NOT a browser intent
+    shell: 'mod8 dev:open-browser-parse "open the file src/index.ts"'
+    expect:
+      stdout_contains: "intent=none"
+
+  - name: open package.json — NOT a browser intent
+    shell: 'mod8 dev:open-browser-parse "open package.json"'
+    expect:
+      stdout_contains: "intent=none"
+
+  - name: open issue — github reference, not a browser intent
+    shell: 'mod8 dev:open-browser-parse "open issue 42"'
+    expect:
+      stdout_contains: "intent=none"
+
+  - name: open it — too ambiguous, fall through to LLM
+    shell: 'mod8 dev:open-browser-parse "open it"'
+    expect:
+      stdout_contains: "intent=none"
+
+  - name: opens the door — incidental "open" verb in prose
+    shell: 'mod8 dev:open-browser-parse "opens the door"'
+    expect:
+      stdout_contains: "intent=none"
+
+  - name: empty input
+    shell: 'mod8 dev:open-browser-parse ""'
+    expect:
+      stdout_contains: "intent=none"
+
+  - name: greeting
+    shell: 'mod8 dev:open-browser-parse "hi there"'
+    expect:
+      stdout_contains: "intent=none"
+
+  # ──────────────────────────────────────────────────────────────────
+  # findRecentUrl — transcript scanning for the URL-less Pattern B
+  # ──────────────────────────────────────────────────────────────────
+  - name: findRecentUrl — picks localhost over remote
+    shell: 'mod8 dev:open-browser-parse --find-url "Started Vite dev server at http://localhost:5173/ — docs: https://vitejs.dev"'
+    expect:
+      stdout_contains: "url=http://localhost:5173/"
+
+  - name: findRecentUrl — falls back to last URL when no localhost
+    shell: 'mod8 dev:open-browser-parse --find-url "see https://mod8.ai for details"'
+    expect:
+      stdout_contains: "url=https://mod8.ai"
+
+  - name: findRecentUrl — 127.0.0.1 counts as local
+    shell: 'mod8 dev:open-browser-parse --find-url "running at http://127.0.0.1:3000"'
+    expect:
+      stdout_contains: "url=http://127.0.0.1:3000"
+
+  - name: findRecentUrl — no URLs returns null
+    shell: 'mod8 dev:open-browser-parse --find-url "just some text with no link"'
+    expect:
+      stdout_contains: "url=null"
+
+  - name: findRecentUrl — trailing period stripped
+    shell: 'mod8 dev:open-browser-parse --find-url "now at http://localhost:5173."'
+    expect:
+      stdout_contains: "url=http://localhost:5173"

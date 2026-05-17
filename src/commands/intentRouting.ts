@@ -399,3 +399,115 @@ export function parseCompareWithPrompt(input: string): string | null {
   const m = input.match(/^(?:\/compare|compare all|ask everyone)\s*[:,-]?\s*([\s\S]+)$/i);
   return m ? m[1]!.trim() : null;
 }
+
+/**
+ * Client-side interceptor for "open the browser" / "open <url>" / "preview
+ * this" intents.  Runs BEFORE any LLM call so we never depend on a model
+ * (which keeps refusing the open_url tool across providers — DeepSeek
+ * especially, but the regression hit Claude/Codex/Gemini too) to actually
+ * fire the opener.
+ *
+ * Returns:
+ *   - { explicitUrl: <url> }   user typed a URL — open exactly that
+ *   - { explicitUrl: null }    user asked for the browser without a URL —
+ *                              caller should look up the last URL from the
+ *                              transcript via findRecentUrl(messages)
+ *   - null                     not an open-browser intent — fall through to
+ *                              the LLM (do NOT swallow plain English)
+ *
+ * Must NOT match:
+ *   - "open the file"   "open package.json"   "open issue 42"   "open it"
+ *   - "open a new tab"  "open up to feedback" "opens the door"
+ *   - Anything that doesn't mention "browser" / "preview" / an explicit URL.
+ *   The conservative bar matters — false positives would shadow real work.
+ */
+const URL_RE = /https?:\/\/[^\s<>"')]+/i;
+const URL_RE_GLOBAL = /https?:\/\/[^\s<>"')]+/gi;
+
+// "open <url>" / "launch <url>" / "preview <url>" / "show <url>" — verb +
+// explicit absolute URL.  Anchored to the start to avoid matching URLs that
+// happen to appear inside longer prose ("the docs at https://x.com say to
+// open the file").
+const OPEN_URL_RE =
+  /^\s*(?:please\s+)?(?:can\s+you\s+|could\s+you\s+|just\s+)?(?:open|launch|preview|view|show(?:\s+me)?|fire\s*up|start)\s+(?:up\s+)?(https?:\/\/[^\s<>"')]+)\s*[.!?]?\s*$/i;
+
+// "open the browser" and its many natural phrasings.  These do NOT carry a
+// URL — caller resolves the URL from recent transcript.
+const OPEN_BROWSER_PATTERNS: RegExp[] = [
+  // "open|launch|fire up|start (up)? (the|a)? browser" — bare or trailing
+  /\b(?:open|launch|fire\s*up|start)\s+(?:up\s+)?(?:the\s+|a\s+)?browser\b/i,
+  // "open|show|view|preview|see (it|this|that)? in (the )? browser"
+  /\b(?:open|show|view|preview|see)\s+(?:it|this|that|the\s+page|the\s+site|the\s+app|the\s+app\s+up)?\s*in\s+(?:the\s+|a\s+)?browser\b/i,
+  // "in the browser" trailing fragment ("show in the browser")
+  /\bin\s+(?:the\s+|my\s+)?browser\b/i,
+  // "preview this" / "preview it" / "preview the app" — browser implied
+  /^\s*preview\s+(?:this|it|that|the\s+(?:app|site|page))\s*[.!?]?\s*$/i,
+  // "open it up" + browser hint already covered above; this catches the
+  // bare "open browser" without "the".
+  /^\s*open\s+browser\s*[.!?]?\s*$/i,
+];
+
+export function parseOpenBrowser(
+  input: string
+): { explicitUrl: string | null } | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  // Pattern A: explicit URL after an open/launch/preview verb — highest
+  // confidence, even if the rest of the sentence doesn't say "browser".
+  const explicit = trimmed.match(OPEN_URL_RE);
+  if (explicit) {
+    return { explicitUrl: explicit[1]! };
+  }
+
+  // Pattern B: phrase mentions the browser (or "preview this") with no URL.
+  // Pull any URL that happens to be in the same sentence ("open https://x
+  // in the browser" — though Pattern A usually catches that first).
+  for (const re of OPEN_BROWSER_PATTERNS) {
+    if (re.test(trimmed)) {
+      const m = trimmed.match(URL_RE);
+      return { explicitUrl: m ? cleanTrailingPunct(m[0]) : null };
+    }
+  }
+  return null;
+}
+
+function cleanTrailingPunct(u: string): string {
+  // URL regex can include trailing punctuation that wasn't part of the link
+  // ("...open http://x.com.").  Strip common sentence terminators.
+  return u.replace(/[.,;:!?)\]]+$/, '');
+}
+
+/**
+ * Scan recent conversation for the most relevant URL to open in a browser,
+ * for use after parseOpenBrowser() returned `{ explicitUrl: null }`.
+ *
+ * Strategy:
+ *   1. Walk messages newest → oldest.
+ *   2. For each, prefer localhost / 127.0.0.1 / 0.0.0.0 / [::1] URLs (dev
+ *      servers — what the user almost always means).
+ *   3. Fall back to the last absolute http(s) URL in the message.
+ *   4. Return the first hit; null if the transcript has no URLs.
+ *
+ * Scans BOTH user and assistant messages — the URL might have been pasted
+ * by the user ("test this: http://localhost:5173") or printed by the model
+ * after starting a dev server.
+ */
+export function findRecentUrl(
+  messages: ReadonlyArray<{ role: string; content: string }>
+): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || typeof m.content !== 'string') continue;
+    const urls = [...m.content.matchAll(URL_RE_GLOBAL)].map((x) =>
+      cleanTrailingPunct(x[0])
+    );
+    if (urls.length === 0) continue;
+    const local = urls.find((u) =>
+      /(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)/.test(u)
+    );
+    if (local) return local;
+    return urls[urls.length - 1]!;
+  }
+  return null;
+}

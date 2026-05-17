@@ -1,6 +1,6 @@
 {
   "name": "mod8-cli",
-  "version": "0.5.27",
+  "version": "0.5.28",
   "description": "The AI coding terminal that picks the best model for you. mod8 routes each task to Claude, GPT, Gemini, or DeepSeek — compares them side-by-side, switches mid-task, and ships sites with one command.",
   "type": "module",
   "bin": {

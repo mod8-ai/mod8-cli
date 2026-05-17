@@ -17,6 +17,7 @@ import { resolve, dirname, isAbsolute } from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import * as diffLib from 'diff';
 import { WriteLedger, formatAgo } from './writeLedger.js';
+import { openInBrowser } from '../util/browser.js';
 
 export interface InkToolContext {
   cwd: string;
@@ -224,33 +225,8 @@ export function buildInkTools(ctx: InkToolContext) {
           .describe('Absolute URL (must include scheme, e.g. http:// or https://)'),
       }),
       execute: async ({ url }) => {
-        // Pick the right opener for the OS.  Falls back to xdg-open on
-        // unknown unix-likes.  Detached so we don't tie the agent to the
-        // browser's lifetime — the agent's job is done as soon as the
-        // browser starts.
-        const opener =
-          process.platform === 'darwin'
-            ? 'open'
-            : process.platform === 'win32'
-              ? 'start'
-              : 'xdg-open';
-        const args = process.platform === 'win32' ? ['', url] : [url];
-        return new Promise<string>((resolveStr) => {
-          execFile(opener, args, { timeout: 5000 }, (err) => {
-            if (err) {
-              const code = (err as NodeJS.ErrnoException).code;
-              if (code === 'ENOENT') {
-                resolveStr(
-                  `Couldn't open ${url} — '${opener}' not found on this system.`
-                );
-                return;
-              }
-              resolveStr(`Couldn't open ${url} — ${err.message}`);
-              return;
-            }
-            resolveStr(`✓ Opened ${url} in your browser.`);
-          });
-        });
+        const r = await openInBrowser(url);
+        return r.msg;
       },
     }),
 

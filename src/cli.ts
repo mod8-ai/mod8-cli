@@ -31,7 +31,7 @@ program
   .description(
     'Talk to any LLM from your terminal — Claude, GPT, Gemini, DeepSeek, Mistral, Groq, anything OpenAI-compatible. BYOK.'
   )
-  .version('0.5.27');
+  .version('0.5.28');
 
 program
   .argument('[prompt]', 'prompt to send (uses default provider unless a flag is set)')
@@ -352,6 +352,38 @@ program
     console.log(
       `consecutive=${n} threshold=${AUTO_FALLBACK_THRESHOLD} decision=${decision}`
     );
+  });
+
+// Dev endpoint: drive the open-browser interceptor's pure parsers from a
+// shell.  Behavioral specs use this to lock down which phrases trigger the
+// client-side opener (and which fall through to the LLM as normal English).
+//
+// Usage:
+//   mod8 dev:open-browser-parse "<input>"
+//     - prints: intent=open url=<resolved-or-null>   (one of two forms)
+//     - or: intent=none                              (no open-browser intent)
+//   mod8 dev:open-browser-parse --find-url "<transcript-text>"
+//     - exercises findRecentUrl on a synthetic single-message transcript
+//     - prints: url=<resolved-or-null>
+program
+  .command('dev:open-browser-parse <input>')
+  .description('show how the open-browser interceptor parses an input (debug only)')
+  .option('--find-url', 'treat <input> as transcript text; print findRecentUrl()')
+  .action(async (input: string, opts: { findUrl?: boolean }) => {
+    const { parseOpenBrowser, findRecentUrl } = await import(
+      './commands/intentRouting.js'
+    );
+    if (opts.findUrl) {
+      const url = findRecentUrl([{ role: 'assistant', content: input }]);
+      console.log(`url=${url ?? 'null'}`);
+      return;
+    }
+    const r = parseOpenBrowser(input);
+    if (!r) {
+      console.log('intent=none');
+      return;
+    }
+    console.log(`intent=open url=${r.explicitUrl ?? 'null'}`);
   });
 
 // Dev endpoint: print which model would be sent to the provider, with the

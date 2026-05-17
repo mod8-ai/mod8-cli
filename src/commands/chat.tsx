@@ -67,6 +67,7 @@ import {
   generateTitle,
 } from '../storage/sessions.js';
 import { humanTimeAgo } from '../util/time.js';
+import { openInBrowser } from '../util/browser.js';
 import {
   parseProviderRoute,
   parseHostBack,
@@ -74,6 +75,8 @@ import {
   parseBareProviderHint,
   isCompareCommand,
   parseCompareWithPrompt,
+  parseOpenBrowser,
+  findRecentUrl,
   parsePasteKeyIntent,
   isPasteConfirmAffirmative,
   isAffirmative,
@@ -1400,6 +1403,32 @@ function App({
     const comparePayload = parseCompareWithPrompt(value);
     if (comparePayload) {
       await runCompareTurn(comparePayload);
+      return;
+    }
+
+    // Client-side open-browser interceptor.  Runs BEFORE every routing
+    // parser and BEFORE any LLM call.  We do this client-side because the
+    // model-side open_url tool keeps getting refused across providers
+    // (DeepSeek consistently, Claude/Codex/Gemini intermittently after the
+    // 0.5.27 system-prompt hardening) — no amount of "use this tool" prose
+    // is enough.  Pattern detection on the input is rock-solid in
+    // comparison: if the user said "open the browser", we open it.
+    const openIntent = parseOpenBrowser(value);
+    if (openIntent) {
+      const url =
+        openIntent.explicitUrl ?? findRecentUrl(sessionRef.current.messages);
+      if (!url) {
+        append({
+          kind: 'info',
+          text:
+            "I don't have a URL to open. Either paste one (e.g. " +
+            '"open http://localhost:5173") or start your dev server first ' +
+            'and try again.',
+        });
+        return;
+      }
+      const r = await openInBrowser(url);
+      append({ kind: 'info', text: r.msg });
       return;
     }
 
