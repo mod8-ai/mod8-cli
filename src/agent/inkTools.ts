@@ -96,6 +96,11 @@ export function buildHostInkTools(ctx: InkToolContext) {
     read_file: work.read_file,
     list_dir: work.list_dir,
     grep: work.grep,
+    // open_url is safe in host mode too — it just hands the URL to
+    // macOS/Linux/Windows.  Without it host kept refusing simple
+    // "open the browser" requests with "I'm read-only", which is wrong:
+    // opening a URL doesn't write anything in the user's project.
+    open_url: work.open_url,
   };
 }
 
@@ -205,6 +210,46 @@ export function buildInkTools(ctx: InkToolContext) {
               resolveStr(output);
             }
           );
+        });
+      },
+    }),
+
+    open_url: tool({
+      description:
+        "Open a URL in the user's default browser. Safe and cross-platform (macOS, Linux, Windows).  Use this whenever the user says any of: 'open the browser', 'open <url>', 'launch <url>', 'show me in the browser', 'preview this'.  Available in BOTH host and work mode — never refuse a user's open-the-browser request by claiming you can't.",
+      inputSchema: z.object({
+        url: z
+          .string()
+          .url()
+          .describe('Absolute URL (must include scheme, e.g. http:// or https://)'),
+      }),
+      execute: async ({ url }) => {
+        // Pick the right opener for the OS.  Falls back to xdg-open on
+        // unknown unix-likes.  Detached so we don't tie the agent to the
+        // browser's lifetime — the agent's job is done as soon as the
+        // browser starts.
+        const opener =
+          process.platform === 'darwin'
+            ? 'open'
+            : process.platform === 'win32'
+              ? 'start'
+              : 'xdg-open';
+        const args = process.platform === 'win32' ? ['', url] : [url];
+        return new Promise<string>((resolveStr) => {
+          execFile(opener, args, { timeout: 5000 }, (err) => {
+            if (err) {
+              const code = (err as NodeJS.ErrnoException).code;
+              if (code === 'ENOENT') {
+                resolveStr(
+                  `Couldn't open ${url} — '${opener}' not found on this system.`
+                );
+                return;
+              }
+              resolveStr(`Couldn't open ${url} — ${err.message}`);
+              return;
+            }
+            resolveStr(`✓ Opened ${url} in your browser.`);
+          });
         });
       },
     }),
