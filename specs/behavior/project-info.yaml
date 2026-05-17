@@ -1,0 +1,141 @@
+name: behavior — project identity for the Projects dashboard
+description: |
+  Every mod8 turn sends a (projectId, projectName, stack) triple to the
+  proxy so the mod8.ai Projects dashboard can aggregate spend per project.
+  This spec pins the resolution order:
+
+    1. .mod8/project.yaml overrides everything (explicit name wins).
+    2. Git root basename is used when present (so subdirectories of a
+       repo share one project).
+    3. cwd basename is the fallback (no git, no .mod8 — still works).
+
+  Also pins that:
+    - projectId is a stable 16-hex-char hash of the resolved root.
+    - The same cwd ALWAYS produces the same projectId (no time drift).
+    - Stack auto-detection finds nextjs / react / supabase / python etc.
+    - Malformed .mod8/project.yaml degrades gracefully (no throw).
+
+tests:
+  - name: empty fresh directory uses basename as project name
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/fresh-proj
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/fresh-proj'
+    expect:
+      stdout_contains: '"projectName":"fresh-proj"'
+
+  - name: empty fresh directory produces a 16-hex projectId
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/fresh-proj-2
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/fresh-proj-2'
+    expect:
+      stdout_matches: '"projectId":"[a-f0-9]{16}"'
+
+  - name: same path called twice returns the same projectId (stable)
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/stable-dir
+    shell: |
+      A=$(mod8 dev:project-info $MOD8_CONFIG_DIR/stable-dir | grep -o '"projectId":"[^"]*"')
+      B=$(mod8 dev:project-info $MOD8_CONFIG_DIR/stable-dir | grep -o '"projectId":"[^"]*"')
+      if [ "$A" = "$B" ]; then echo "STABLE_OK"; else echo "DRIFTED: $A vs $B"; fi
+    expect:
+      stdout_contains: 'STABLE_OK'
+
+  - name: explicit .mod8/project.yaml overrides cwd basename
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/raw-name/.mod8
+          printf "name: My Cool App\ndescription: a description\nicon: rocket\n" > $MOD8_CONFIG_DIR/raw-name/.mod8/project.yaml
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/raw-name'
+    expect:
+      stdout_contains: '"projectName":"My Cool App"'
+
+  - name: explicit description is surfaced
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/desc-proj/.mod8
+          printf "name: Foo\ndescription: a test project\n" > $MOD8_CONFIG_DIR/desc-proj/.mod8/project.yaml
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/desc-proj'
+    expect:
+      stdout_contains: '"description":"a test project"'
+
+  - name: malformed project.yaml degrades to defaults (no throw)
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/bad-yaml/.mod8
+          printf "not: valid: yaml: at all: ::\n" > $MOD8_CONFIG_DIR/bad-yaml/.mod8/project.yaml
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/bad-yaml'
+    expect:
+      stdout_contains: '"projectName":"bad-yaml"'
+
+  - name: detects nextjs from package.json
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/nextjs-app
+          cat > $MOD8_CONFIG_DIR/nextjs-app/package.json <<JSON
+          {"name":"x","dependencies":{"next":"15.0.0","react":"19.0.0","@supabase/supabase-js":"2.0.0"}}
+          JSON
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/nextjs-app'
+    expect:
+      stdout_contains: '"nextjs"'
+
+  - name: nextjs detection also surfaces supabase tag
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/nextjs-supa
+          cat > $MOD8_CONFIG_DIR/nextjs-supa/package.json <<JSON
+          {"name":"x","dependencies":{"next":"15","@supabase/supabase-js":"2"}}
+          JSON
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/nextjs-supa'
+    expect:
+      stdout_contains: '"supabase"'
+
+  - name: python project detected via pyproject.toml
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/py-app
+          printf "[project]\nname=\"x\"\n" > $MOD8_CONFIG_DIR/py-app/pyproject.toml
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/py-app'
+    expect:
+      stdout_contains: '"python"'
+
+  - name: rust project detected via Cargo.toml
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/rust-app
+          printf "[package]\nname=\"x\"\n" > $MOD8_CONFIG_DIR/rust-app/Cargo.toml
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/rust-app'
+    expect:
+      stdout_contains: '"rust"'
+
+  - name: subdirectory of a git repo resolves to the repo root name
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/repo/.git
+          mkdir -p $MOD8_CONFIG_DIR/repo/src/deep/nested
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/repo/src/deep/nested'
+    expect:
+      stdout_contains: '"projectName":"repo"'
+
+  - name: subdir of git repo and repo root share the SAME projectId
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/repo2/.git
+          mkdir -p $MOD8_CONFIG_DIR/repo2/src
+    shell: |
+      A=$(mod8 dev:project-info $MOD8_CONFIG_DIR/repo2 | grep -o '"projectId":"[^"]*"')
+      B=$(mod8 dev:project-info $MOD8_CONFIG_DIR/repo2/src | grep -o '"projectId":"[^"]*"')
+      if [ "$A" = "$B" ]; then echo "SHARED_ID_OK"; else echo "MISMATCH: $A vs $B"; fi
+    expect:
+      stdout_contains: 'SHARED_ID_OK'
+
+  - name: docker is detected when Dockerfile exists
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/docker-app
+          printf "FROM node:20\n" > $MOD8_CONFIG_DIR/docker-app/Dockerfile
+    shell: 'mod8 dev:project-info $MOD8_CONFIG_DIR/docker-app'
+    expect:
+      stdout_contains: '"docker"'

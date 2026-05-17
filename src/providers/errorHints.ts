@@ -189,6 +189,20 @@ export function explainError(err: unknown, providerId: string): ErrorExplanation
         suggestion: `Type 'mod8' to switch back, or switch to a different model.`,
       };
     }
+    case 'context-too-long': {
+      const tail = diag.rawMessage ? `: ${quote(diag.rawMessage)}` : '';
+      return {
+        kind: diag.kind,
+        short: `${providerId} couldn't fit the request — too big for its context window${tail}`,
+        long:
+          `The message + history + any attached images add up to more than ${providerId} can read in one turn.\n` +
+          `Possible fixes:\n` +
+          `- mod8 will offer to switch to a provider with a bigger window (gemini = 2M, gpt-4.1 = 1M)\n` +
+          `- Or run /clear to drop the accumulated history and try again\n` +
+          `- Or re-send without the large image attachment`,
+        suggestion: `Switching to a bigger-window provider — re-send your last message.`,
+      };
+    }
     default: {
       // 'other' — generic fallback.  We do NOT pretend to diagnose; just
       // surface the raw message and give a minimal escape suggestion.

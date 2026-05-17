@@ -11,16 +11,18 @@ export interface ProviderFlagOptions {
   claude?: boolean;
   openai?: boolean;
   gemini?: boolean;
+  deepseek?: boolean;
 }
 
 export async function resolveProvider(opts: ProviderFlagOptions): Promise<ProviderId> {
-  const flags = [opts.claude, opts.openai, opts.gemini].filter(Boolean).length;
+  const flags = [opts.claude, opts.openai, opts.gemini, opts.deepseek].filter(Boolean).length;
   if (flags > 1) {
-    throw new Error('Cannot use multiple provider flags. Pick one of -c, -o, -g, or use --all.');
+    throw new Error('Cannot use multiple provider flags. Pick one of -c, -o, -g, -d, or use --all.');
   }
   if (opts.claude) return 'anthropic';
   if (opts.openai) return 'openai';
   if (opts.gemini) return 'google';
+  if (opts.deepseek) return 'deepseek';
   const config = await getConfig();
   return config.default ?? 'anthropic';
 }

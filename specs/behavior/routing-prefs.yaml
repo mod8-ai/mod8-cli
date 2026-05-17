@@ -1,0 +1,113 @@
+name: behavior — per-user routing preferences
+description: |
+  mod8 learns the user's routing habits.  Every time the chat layer
+  finishes a successful work-mode turn on a non-ride-along topic, it
+  increments a (topic, provider) counter in
+  $MOD8_CONFIG_DIR/routing-prefs.json.
+
+  The comparison panel then uses those counts to float the user's
+  preferred provider into row 0 — so after a week of use, the panel
+  reflects YOUR habits, not just the curated static recommendation.
+
+  This spec pins:
+    1. A missing prefs file yields {} (load is best-effort).
+    2. recordPick creates the file + counter on first call.
+    3. Counters accumulate across calls.
+    4. preferredProviderFor returns null below the minPicks threshold
+       (so a single accidental override never flips the recommendation).
+    5. preferredProviderFor returns the top-picked provider once the
+       threshold is met.
+    6. Ties resolve deterministically (first one to win — current Map
+       iteration order is insertion order, so the first to reach the
+       max keeps the slot).
+
+tests:
+  - name: load returns empty object when the file does not exist
+    shell: 'mod8 dev:routing-prefs load'
+    expect:
+      stdout_contains: '{}'
+
+  - name: record creates the file and increments the counter
+    shell: 'mod8 dev:routing-prefs record frontend-ui anthropic'
+    expect:
+      stdout_contains: '"frontend-ui":{"anthropic":1}'
+
+  - name: record accumulates across multiple calls
+    setup:
+      - shell: |
+          mod8 dev:routing-prefs record frontend-ui anthropic > /dev/null
+          mod8 dev:routing-prefs record frontend-ui anthropic > /dev/null
+          mod8 dev:routing-prefs record frontend-ui anthropic > /dev/null
+    shell: 'mod8 dev:routing-prefs load'
+    expect:
+      stdout_contains: '"anthropic":3'
+
+  - name: record tracks multiple providers for the same topic
+    setup:
+      - shell: |
+          mod8 dev:routing-prefs record backend-api openai > /dev/null
+          mod8 dev:routing-prefs record backend-api openai > /dev/null
+          mod8 dev:routing-prefs record backend-api anthropic > /dev/null
+    shell: 'mod8 dev:routing-prefs load'
+    expect:
+      stdout_matches: '"backend-api":\{[^}]*"openai":2[^}]*"anthropic":1[^}]*\}'
+
+  - name: preferredProviderFor returns null below the minPicks threshold
+    setup:
+      - shell: |
+          mod8 dev:routing-prefs record database google > /dev/null
+    shell: 'mod8 dev:routing-prefs preferred database 2'
+    expect:
+      stdout_contains: '"preferred":null'
+
+  - name: preferredProviderFor returns the top pick once threshold is met
+    setup:
+      - shell: |
+          mod8 dev:routing-prefs record database google > /dev/null
+          mod8 dev:routing-prefs record database google > /dev/null
+    shell: 'mod8 dev:routing-prefs preferred database 2'
+    expect:
+      stdout_contains: '"preferred":"google"'
+
+  - name: preferredProviderFor returns the leader when multiple providers exist
+    setup:
+      - shell: |
+          mod8 dev:routing-prefs record refactor deepseek > /dev/null
+          mod8 dev:routing-prefs record refactor deepseek > /dev/null
+          mod8 dev:routing-prefs record refactor deepseek > /dev/null
+          mod8 dev:routing-prefs record refactor anthropic > /dev/null
+    shell: 'mod8 dev:routing-prefs preferred refactor 2'
+    expect:
+      stdout_contains: '"preferred":"deepseek"'
+
+  - name: preferred is null for topics never recorded
+    setup:
+      - shell: |
+          mod8 dev:routing-prefs record frontend-ui anthropic > /dev/null
+    shell: 'mod8 dev:routing-prefs preferred devops 2'
+    expect:
+      stdout_contains: '"preferred":null'
+
+  - name: each topic is tracked independently
+    setup:
+      - shell: |
+          mod8 dev:routing-prefs record frontend-ui anthropic > /dev/null
+          mod8 dev:routing-prefs record frontend-ui anthropic > /dev/null
+          mod8 dev:routing-prefs record backend-api openai > /dev/null
+          mod8 dev:routing-prefs record backend-api openai > /dev/null
+    shell: |
+      A=$(mod8 dev:routing-prefs preferred frontend-ui 2)
+      B=$(mod8 dev:routing-prefs preferred backend-api 2)
+      echo "$A | $B"
+    expect:
+      stdout_contains: '{"topic":"frontend-ui","preferred":"anthropic"} | {"topic":"backend-api","preferred":"openai"}'
+
+  - name: prefs file is written with mode 0600 (private)
+    setup:
+      - shell: |
+          mod8 dev:routing-prefs record frontend-ui anthropic > /dev/null
+    shell: |
+      stat -f '%Lp' $MOD8_CONFIG_DIR/routing-prefs.json 2>/dev/null \
+        || stat -c '%a' $MOD8_CONFIG_DIR/routing-prefs.json
+    expect:
+      stdout_contains: '600'

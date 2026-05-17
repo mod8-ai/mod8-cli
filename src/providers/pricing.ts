@@ -29,6 +29,11 @@ const PRICING: Record<string, ModelPricing> = {
   'gemini-2.0-flash': { inputPerMtok: 0.075, outputPerMtok: 0.3 },
   'gemini-2.5-flash': { inputPerMtok: 0.075, outputPerMtok: 0.3 },
   'gemini-2.5-pro': { inputPerMtok: 1.25, outputPerMtok: 5 },
+
+  // DeepSeek (off-peak rates round trip — list prices, not promo)
+  'deepseek-chat': { inputPerMtok: 0.27, outputPerMtok: 1.1 },
+  'deepseek-coder': { inputPerMtok: 0.27, outputPerMtok: 1.1 },
+  'deepseek-reasoner': { inputPerMtok: 0.55, outputPerMtok: 2.19 },
 };
 
 export function priceFor(model: string, inputTokens: number, outputTokens: number): number {

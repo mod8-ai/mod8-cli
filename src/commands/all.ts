@@ -11,6 +11,8 @@ import {
   type ProviderEntry,
 } from '../storage/providers.js';
 import { templateById } from '../providers/registry.js';
+import { readAuth } from '../storage/auth.js';
+import { PROXY_PROVIDER_IDS } from '../providers/proxy.js';
 
 interface ProviderResult {
   id: string;
@@ -54,17 +56,46 @@ async function resolveAllProviders(): Promise<{ id: string; entry: ProviderEntry
     return out;
   }
 
-  const ids = await configuredProviderIds();
-  // Add legacy ids whose env keys are set but who aren't yet stored.
-  for (const legacy of ['anthropic', 'openai', 'google'] as const) {
-    if (!ids.includes(legacy)) {
-      const env = await resolveConfigured(legacy);
-      if (env) ids.push(legacy);
+  const auth = await readAuth();
+  const localIds = await configuredProviderIds();
+  let ids: string[];
+  if (auth) {
+    // Proxy mode: all four built-in proxy providers are live.  Append any
+    // local custom providers (mistral/groq/openrouter/xai/custom) that the
+    // proxy doesn't carry yet — those still call out directly with the
+    // user's local key.
+    const customLocal = localIds.filter(
+      (id) => !(PROXY_PROVIDER_IDS as readonly string[]).includes(id)
+    );
+    ids = [...PROXY_PROVIDER_IDS, ...customLocal];
+  } else {
+    ids = localIds;
+    // Add legacy ids whose env keys are set but who aren't yet stored.
+    for (const legacy of ['anthropic', 'openai', 'google'] as const) {
+      if (!ids.includes(legacy)) {
+        const env = await resolveConfigured(legacy);
+        if (env) ids.push(legacy);
+      }
     }
   }
   const out: { id: string; entry: ProviderEntry }[] = [];
   for (const id of ids) {
-    const entry = await resolveConfigured(id);
+    let entry = await resolveConfigured(id);
+    if (!entry && auth && (PROXY_PROVIDER_IDS as readonly string[]).includes(id)) {
+      // Synthesize from template — the proxy client doesn't need a local key.
+      const tpl = templateById(id);
+      if (tpl) {
+        entry = {
+          name: tpl.name,
+          apiType: tpl.apiType,
+          apiKey: '',
+          defaultModel: tpl.defaultModel,
+          ...(tpl.baseUrl ? { baseUrl: tpl.baseUrl } : {}),
+          color: tpl.color,
+          custom: false,
+        };
+      }
+    }
     if (entry) out.push({ id, entry });
     else if (process.env.MOD8_MOCK === '1') {
       // Synthesize a placeholder so the mock dispatcher still gets called.

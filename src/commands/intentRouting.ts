@@ -97,6 +97,40 @@ export function parseHostBack(input: string): { rest: string } | null {
 }
 
 /**
+ * Match a MID-STREAM handoff gesture — used by the chat REPL while a
+ * provider is busy to short-circuit the queue and transfer the same task
+ * to a different provider.  Distinct from parseProviderRoute (which fires
+ * before a turn starts) because handoff implies "abort what's happening
+ * now, switch, continue from there".
+ *
+ * Returns the target provider id (a string the caller still resolves via
+ * resolveProviderHint), or null if no handoff intent is present.
+ *
+ * Phrasings handled (case-insensitive):
+ *   /handoff <id>          /switch <id>
+ *   handoff to <id>        switch to <id>      switch over to <id>
+ *   @<id> take over        @<id> takeover      @<id> continue
+ *   @<id> finish           @<id> proceed       @<id> resume
+ *   give it to <id>        hand it to <id>     hand off to <id>
+ *   let <id> finish        let <id> continue   let <id> proceed
+ */
+const HANDOFF_PATTERNS: RegExp[] = [
+  /^\s*\/(?:handoff|switch)\s+([a-z][a-z0-9_.-]{0,30})\b.*$/i,
+  /^\s*(?:handoff|hand\s+off|switch(?:\s+over)?)\s+to\s+([a-z][a-z0-9_.-]{0,30})\b.*$/i,
+  /^\s*@([a-z][a-z0-9_.-]{0,30})\s+(?:take\s*over|takeover|continue|finish|proceed|resume|do\s+it)\b.*$/i,
+  /^\s*(?:give|hand)\s+(?:it|this)\s+to\s+([a-z][a-z0-9_.-]{0,30})\b.*$/i,
+  /^\s*let\s+([a-z][a-z0-9_.-]{0,30})\s+(?:take\s*over|takeover|continue|finish|proceed|do\s+it)\b.*$/i,
+];
+
+export function parseHandoff(input: string): string | null {
+  for (const re of HANDOFF_PATTERNS) {
+    const m = input.match(re);
+    if (m && m[1]) return m[1].toLowerCase();
+  }
+  return null;
+}
+
+/**
  * Decide whether to auto-fallback from work mode to host based on the running
  * count of consecutive work-mode errors.  Pure function so behavioral specs
  * can hit it without driving the chat REPL.

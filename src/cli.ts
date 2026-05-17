@@ -1,6 +1,9 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { keysSet, keysList, keysRemove } from './commands/keys.js';
+import { loginCommand } from './commands/login.js';
+import { logoutCommand } from './commands/logout.js';
+import { readAuth } from './storage/auth.js';
 import { runPrompt, resolveProvider } from './commands/prompt.js';
 import { runAll, ensureAllConsent } from './commands/all.js';
 import { configGet, configSet } from './commands/config.js';
@@ -9,9 +12,12 @@ import { listCommand } from './commands/list.js';
 import { verifyCommand } from './commands/verify.js';
 import { getMostRecentSession } from './storage/sessions.js';
 import { addProviderCommand } from './commands/addProvider.js';
+import { publish as publishCommand } from './commands/publish.js';
 import { listProvidersCommand } from './commands/providers.js';
 import { devHostAsk } from './commands/devHostAsk.js';
 import { devResolve } from './commands/devResolve.js';
+import { devProjectInfo } from './commands/devProjectInfo.js';
+import { devRoutingPrefs } from './commands/devRoutingPrefs.js';
 import { devWorkAsk } from './commands/devWorkAsk.js';
 import { devSimulate } from './commands/devSimulate.js';
 import { devHostSystem } from './commands/devHostSystem.js';
@@ -25,25 +31,37 @@ program
   .description(
     'Talk to any LLM from your terminal — Claude, GPT, Gemini, DeepSeek, Mistral, Groq, anything OpenAI-compatible. BYOK.'
   )
-  .version('0.1.0');
+  .version('0.5.24');
 
 program
   .argument('[prompt]', 'prompt to send (uses default provider unless a flag is set)')
   .option('-c, --claude', 'use Claude (Anthropic)')
   .option('-o, --openai', 'use OpenAI (GPT)')
   .option('-g, --gemini', 'use Gemini (Google)')
+  .option('-d, --deepseek', 'use DeepSeek')
   .option('--all', 'run on every configured provider in parallel and show side-by-side')
+  .option('--model <id>', 'starting model for the agent REPL (claude-sonnet-4-6, gpt-4o, gemini-2.5-flash, deepseek-chat)')
+  .option('--yes', 'auto-approve every destructive tool call (REPL only)')
   .action(
     async (
       prompt: string | undefined,
-      opts: { claude?: boolean; openai?: boolean; gemini?: boolean; all?: boolean }
+      opts: {
+        claude?: boolean;
+        openai?: boolean;
+        gemini?: boolean;
+        deepseek?: boolean;
+        all?: boolean;
+        model?: string;
+        yes?: boolean;
+      }
     ) => {
       if (!prompt) {
-        // Bare `mod8` (no flags, no prompt) → enter chat REPL with a FRESH
-        // session.  Mirrors how chat products work elsewhere: opening = new
-        // conversation; history is one click (or one `mod8 resume`) away.
-        // With any flag set but no prompt, fall through to help.
-        if (!opts.claude && !opts.openai && !opts.gemini && !opts.all) {
+        // Bare `mod8` (no flags, no prompt) → the Ink REPL with full
+        // visual identity (per-provider colors, mode-switch banners,
+        // bare-name routing, compare grid).  Agent tools integration
+        // lands as a follow-up — INTO this REPL, not as a replacement.
+        if (!opts.claude && !opts.openai && !opts.gemini && !opts.deepseek && !opts.all) {
+          await printStartupBanner();
           await runChat({ fresh: true });
           return;
         }
@@ -90,6 +108,14 @@ keys
   .description('Remove a stored API key')
   .action(async (provider: string) => {
     await keysRemove(provider);
+  });
+
+program
+  .command('chat')
+  .description('Open the multi-provider chat REPL (host + workers, /compare, "use X" — no agent tools)')
+  .action(async () => {
+    await printStartupBanner();
+    await runChat({ fresh: true });
   });
 
 program
@@ -146,6 +172,82 @@ program
     await verifyCommand();
   });
 
+program
+  .command('init')
+  .description('Scaffold a .mod8/ project-awareness folder in the current directory')
+  .option('--force', 'Overwrite existing files (backs them up to <file>.bak)')
+  .action(async (opts: { force?: boolean }) => {
+    const { runInit } = await import('./commands/init.js');
+    await runInit({ ...(opts.force ? { force: true } : {}) });
+  });
+
+program
+  .command('context')
+  .description('Show what project context the agent would load from this directory (debug)')
+  .action(async () => {
+    const { runContext } = await import('./commands/context.js');
+    await runContext();
+  });
+
+// Static-site hosting: package the current project's build output and
+// ship it to a free <slug>.apps.mod8.ai subdomain.  Dry-run by default
+// — the actual upload requires --confirm and a logged-in account.
+program
+  .command('publish')
+  .description('Publish the current project as a static site at <slug>.apps.mod8.ai (dry-run by default)')
+  .option('--confirm', 'Actually upload (default is dry run — prints the plan only)')
+  .option('--slug <name>', 'Override the auto-derived subdomain (3-32 chars, a-z 0-9 -)')
+  .option('--dir <path>', 'Override the auto-detected output dir (e.g. ./build, ./out)')
+  .option('--domain <domain>', 'Attach a custom domain (e.g. propflow.com) — site answers at BOTH the apps.mod8.ai URL and your domain')
+  .action(async (opts: { confirm?: boolean; slug?: string; dir?: string; domain?: string }) => {
+    await publishCommand({
+      confirm: !!opts.confirm,
+      ...(opts.slug ? { slug: opts.slug } : {}),
+      ...(opts.dir ? { dir: opts.dir } : {}),
+      ...(opts.domain ? { domain: opts.domain } : {}),
+    });
+  });
+
+program
+  .command('agent <task...>')
+  .description('Run a coding agent in the current directory — reads/writes files, runs commands, loops until done.')
+  .option('--model <id>', 'Model to use (claude-sonnet-4-6, gpt-4o, gemini-2.5-flash, deepseek-chat, or short aliases: claude, gpt, gemini, deepseek)')
+  .option('--yes', 'Auto-approve all destructive tool calls (skip y/n prompts)')
+  .option('--max-steps <n>', 'Maximum number of agent steps before stopping (default 20)', (v) => parseInt(v, 10))
+  .action(async (taskParts: string[], opts: { model?: string; yes?: boolean; maxSteps?: number }) => {
+    const { runAgent } = await import('./commands/agent.js');
+    await runAgent(taskParts.join(' '), {
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.yes ? { yes: true } : {}),
+      ...(opts.maxSteps ? { maxSteps: opts.maxSteps } : {}),
+    });
+  });
+
+// Dev endpoint: print the resolved auth status + the proxy-routing decision
+// for a few canonical provider ids.  Pure (no network).  Used by the login
+// behavioral spec.
+program
+  .command('dev:auth-status')
+  .description('print resolved auth.json + proxy routing decision (no network)')
+  .action(async () => {
+    const { devAuthStatus } = await import('./commands/devAuthStatus.js');
+    await devAuthStatus();
+  });
+
+program
+  .command('login')
+  .description('Connect this CLI to your mod8 account — routes calls through the hosted proxy')
+  .action(async () => {
+    await loginCommand();
+  });
+
+program
+  .command('logout')
+  .description('Drop mod8 credentials — falls back to your local providers.json')
+  .action(async () => {
+    await logoutCommand();
+  });
+
 // Dev endpoint: one-shot through the host (mod8) system prompt — used by
 // the chat-meta verify spec to confirm mod8 can answer questions about
 // itself. Also useful from the shell for quick meta queries.
@@ -163,6 +265,26 @@ program
   .description('show how the chat REPL would route an input (debug only)')
   .action(async (input: string) => {
     await devResolve(input);
+  });
+
+// Dev endpoint: derive the project identity that mod8 would send with
+// each run-tracking call.  Used by behavioral specs to lock in cwd
+// → projectId, stack detection, and .mod8/project.yaml override handling.
+program
+  .command('dev:project-info [cwd]')
+  .description('print the project identity mod8 derives for a directory (debug only)')
+  .action(async (cwd?: string) => {
+    await devProjectInfo(cwd);
+  });
+
+// Dev endpoint: drive the per-user routing-prefs module from a shell so
+// behavioral specs can assert load / record / preferred without booting
+// the full chat UI.
+program
+  .command('dev:routing-prefs <action> [arg1] [arg2]')
+  .description('debug only — drive loadPrefs / recordPick / preferredProviderFor')
+  .action(async (action: string, arg1?: string, arg2?: string) => {
+    await devRoutingPrefs(action, arg1, arg2);
   });
 
 // Dev endpoint: one-shot through WORK-mode system prompt for the given
@@ -194,6 +316,22 @@ program
   .description('print the host system prompt with current provider state')
   .action(async () => {
     await devHostSystem();
+  });
+
+// Dev endpoint: print the AGENT system prompt as it would be assembled
+// right now from the current cwd's .mod8/context.md (if any).  Used by
+// behavioral specs to verify the project-context injection pipeline.
+program
+  .command('dev:agent-system')
+  .description('print the agent system prompt with the current project-context state')
+  .option('--provider <id>', 'Provider id (default: anthropic)')
+  .option('--model <id>', 'Model id (default: claude-sonnet-4-6)')
+  .action(async (opts: { provider?: string; model?: string }) => {
+    const { devAgentSystem } = await import('./commands/devAgentSystem.js');
+    await devAgentSystem({
+      ...(opts.provider ? { providerId: opts.provider } : {}),
+      ...(opts.model ? { model: opts.model } : {}),
+    });
   });
 
 // Dev endpoint: test the auto-fallback decision logic for a given count of
@@ -292,6 +430,21 @@ config
   .action(async (key: string, value: string) => {
     await configSet(key, value);
   });
+
+/**
+ * Banner printed before the REPL boots — one line so it never gets in the
+ * way.  Quiet on every other entry point (one-shot prompts, dev:* commands,
+ * keys/config) so the output stays predictable for scripting.
+ */
+async function printStartupBanner(): Promise<void> {
+  const auth = await readAuth();
+  if (auth) {
+    const who = auth.email ? chalk.bold(auth.email) : 'mod8 account';
+    process.stderr.write(chalk.dim(`Logged in as ${who} — proxy mode (mod8 logout to switch off)\n`));
+  } else {
+    process.stderr.write(chalk.dim(`Local mode — using providers.json (mod8 login to use the hosted proxy)\n`));
+  }
+}
 
 program.parseAsync().catch((err) => {
   const msg = err instanceof Error ? err.message : String(err);

@@ -1,0 +1,97 @@
+name: behavior — mod8 login / logout / proxy routing
+description: |
+  Tests the CLI ↔ web bridge introduced in 0.2.0.
+
+    - `mod8 logout` on a clean machine is a no-op (says "not logged in").
+    - Writing ~/.config/mod8/auth.json manually flips the routing decision:
+      built-in provider ids (anthropic/openai/google/deepseek) route through
+      the proxy; custom ids fall back to local providers.json.
+    - `mod8 logout` deletes auth.json and the routing flips back to local.
+    - The full secret key never appears in any CLI stdout (masking rule).
+
+  The login command itself drives an interactive paste + a real proxy ping,
+  so we don't exercise it here.  Instead we test the predicate that powers
+  it: auth.json round-trip + `dev:auth-status` output.
+
+tests:
+  - name: 'fresh machine — auth-status reports local mode'
+    shell: 'mod8 dev:auth-status'
+    expect:
+      stdout_contains:
+        - 'authed=false'
+        - 'mode=local'
+      stdout_omits:
+        - 'route id=anthropic proxy=true'
+
+  - name: 'logout on a clean machine is a quiet no-op'
+    shell: 'mod8 logout'
+    expect:
+      stdout_contains:
+        - 'Not logged in'
+
+  - name: 'writing auth.json flips routing to proxy for the 4 built-ins'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {
+            "mod8Key": "sk-mod8-FAKE-TEST-KEY-DOES-NOT-WORK-ANYWHERE",
+            "proxyUrl": "https://example.invalid",
+            "email": "test@example.com"
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json
+    shell: 'mod8 dev:auth-status'
+    expect:
+      stdout_contains:
+        - 'authed=true'
+        - 'mode=proxy'
+        - 'email=test@example.com'
+        - 'proxyUrl=https://example.invalid'
+        - 'route id=anthropic proxy=true'
+        - 'route id=openai proxy=true'
+        - 'route id=google proxy=true'
+        - 'route id=deepseek proxy=true'
+        - 'route id=mistral proxy=false'
+        - 'route id=custom-foo proxy=false'
+      stdout_omits:
+        # Never leak the full plaintext key — the masked variant is fine.
+        - 'sk-mod8-FAKE-TEST-KEY-DOES-NOT-WORK-ANYWHERE'
+
+  - name: '`mod8 logout` after a login deletes auth.json + flips back to local'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {"mod8Key":"sk-mod8-x","proxyUrl":"https://example.invalid"}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json
+    shell: |
+      mod8 logout
+      echo "---after---"
+      mod8 dev:auth-status
+      echo "---file---"
+      ls $MOD8_CONFIG_DIR/auth.json 2>&1 || echo "auth.json deleted"
+    expect:
+      stdout_contains:
+        - 'Logged out'
+        - 'authed=false'
+        - 'mode=local'
+        - 'auth.json deleted'
+
+  - name: 'MOD8_PROXY_URL env overrides auth.json proxyUrl'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {"mod8Key":"sk-mod8-x","proxyUrl":"https://from-file.example"}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json
+    shell: 'MOD8_PROXY_URL=https://from-env.example mod8 dev:auth-status'
+    expect:
+      stdout_contains:
+        # dev:auth-status prints the proxyUrl from auth.json verbatim; the
+        # env override is consumed downstream at request time.  Test the
+        # stored value here; the chat/proxy code path picks the env one
+        # via `effectiveProxyUrl`.
+        - 'proxyUrl=https://from-file.example'

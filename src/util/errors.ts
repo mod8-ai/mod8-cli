@@ -13,6 +13,7 @@ export type ErrorKind =
   | 'network' // ECONN* / fetch failed
   | 'timeout' // request timed out
   | 'model' // model not found / unsupported
+  | 'context-too-long' // payload exceeds the model's context window
   | 'other';
 
 export interface DiagnosedError {
@@ -80,6 +81,26 @@ function detectKind(err: Error, code: number | undefined): ErrorKind {
     return 'network';
   }
   if (/timeout|timed out|ETIMEDOUT/i.test(msg)) return 'timeout';
+
+  // Context-too-long fires BEFORE the HTTP-code mapping: providers return
+  // 400 with a "maximum context length" message (OpenAI / DeepSeek), 413
+  // for some compatible APIs, or a model-name + token count line (Anthropic
+  // / Gemini).  All of them are payload-size problems — the cure is the
+  // same: hand off to a provider with a bigger window.
+  if (
+    /maximum\s+context\s+length/i.test(msg) ||
+    /context[_ -]?length[_ -]?exceeded/i.test(msg) ||
+    /context[_ -]?window[_ -]?exceeded/i.test(msg) ||
+    /prompt\s+is\s+too\s+long/i.test(msg) ||
+    /input\s+is\s+too\s+long/i.test(msg) ||
+    /token[s]?[_ -]?limit[_ -]?exceeded/i.test(msg) ||
+    /string\s+too\s+long/i.test(msg) ||
+    /request\s+too\s+large/i.test(msg) ||
+    /\btoo\s+many\s+input\s+tokens\b/i.test(msg) ||
+    /\bexceeds?\s+the\s+(?:context|token|maximum)\b/i.test(msg)
+  ) {
+    return 'context-too-long';
+  }
 
   if (code === 401) return 'auth';
   if (code === 403) return 'forbidden';

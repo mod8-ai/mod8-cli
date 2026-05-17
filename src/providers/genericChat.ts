@@ -18,6 +18,8 @@ import {
   debugProviderError,
   debugProviderResponse,
 } from '../util/debug.js';
+import { readAuth, effectiveProxyUrl, type AuthData } from '../storage/auth.js';
+import { toProxyProviderId, type ProxyProviderId } from './proxy.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -36,6 +38,20 @@ export interface StreamChatOptions {
 export async function* streamProviderChat(
   opts: StreamChatOptions
 ): AsyncIterable<StreamEvent> {
+  // Proxy short-circuit: when logged in via mod8 login, all four built-in
+  // providers route through the hosted proxy.  Custom OpenAI-compat ids
+  // still hit local providers.json below.
+  if (process.env.MOD8_MOCK !== '1') {
+    const auth = await readAuth();
+    if (auth) {
+      const proxyId = toProxyProviderId(opts.providerId);
+      if (proxyId) {
+        yield* streamProxyChat(auth, proxyId, opts);
+        return;
+      }
+    }
+  }
+
   const entry = await resolveConfigured(opts.providerId);
   if (!entry) {
     const tpl = templateById(opts.providerId);
@@ -164,6 +180,117 @@ async function* streamOpenAICompat(
       latencyMs,
       model: actualModel,
       costUsd: priceFor(actualModel, inputTokens, outputTokens),
+    },
+  };
+}
+
+async function* streamProxyChat(
+  auth: AuthData,
+  providerId: ProxyProviderId,
+  opts: StreamChatOptions
+): AsyncIterable<StreamEvent> {
+  // Default models match makeProxyClient for parity.
+  const defaultByProvider: Record<ProxyProviderId, string> = {
+    anthropic: 'claude-sonnet-4-6',
+    openai: 'gpt-4o',
+    google: 'gemini-2.5-flash',
+    deepseek: 'deepseek-chat',
+  };
+  const resolved = resolveModel(opts.providerId, opts.model, defaultByProvider[providerId]);
+  const model = resolved.model;
+  const proxyUrl = effectiveProxyUrl(auth);
+  const start = Date.now();
+  const resp = await fetch(`${proxyUrl}/v1/chat`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${auth.mod8Key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      provider: providerId,
+      model,
+      system: opts.system,
+      messages: opts.messages,
+      ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+    }),
+    signal: opts.signal,
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`mod8 proxy: ${resp.status} ${resp.statusText}${detail ? ` — ${detail.slice(0, 200)}` : ''}`);
+  }
+  if (!resp.body) throw new Error('mod8 proxy: empty response body');
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let chargedMicros = 0;
+  let sawDone = false;
+
+  const consumeChunk = (chunk: string): Error | null => {
+    for (const line of chunk.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      let ev: { type: string; delta?: string; error?: string; tokensIn?: number; tokensOut?: number; chargedMicros?: number };
+      try {
+        ev = JSON.parse(line.slice(6));
+      } catch {
+        continue;
+      }
+      if (ev.type === 'text') {
+        // text deltas can't be yielded from inside a sync helper — pushed back below
+        pendingText.push(ev.delta ?? '');
+      } else if (ev.type === 'done') {
+        inputTokens = ev.tokensIn ?? 0;
+        outputTokens = ev.tokensOut ?? 0;
+        chargedMicros = ev.chargedMicros ?? 0;
+        sawDone = true;
+      } else if (ev.type === 'error') {
+        return new Error(`mod8 proxy: ${ev.error}`);
+      }
+    }
+    return null;
+  };
+  const pendingText: string[] = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const err = consumeChunk(chunk);
+      if (err) throw err;
+    }
+    while (pendingText.length > 0) {
+      const delta = pendingText.shift()!;
+      yield { type: 'text', delta };
+    }
+  }
+  // Flush the decoder and process anything still buffered.  Some proxies
+  // close the stream without sending the trailing \n\n after the final
+  // done event — drop those bytes and we lose the done signal even though
+  // the proxy reported success.
+  buf += decoder.decode();
+  if (buf.trim().length > 0) {
+    const err = consumeChunk(buf);
+    if (err) throw err;
+    while (pendingText.length > 0) {
+      const delta = pendingText.shift()!;
+      yield { type: 'text', delta };
+    }
+  }
+  if (!sawDone) throw new Error('mod8 proxy: stream ended without a done event');
+  yield {
+    type: 'done',
+    usage: {
+      inputTokens,
+      outputTokens,
+      latencyMs: Date.now() - start,
+      model,
+      costUsd: chargedMicros / 1_000_000,
     },
   };
 }

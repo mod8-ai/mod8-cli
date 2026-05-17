@@ -1,0 +1,143 @@
+name: behavior — project context (.mod8/context.md)
+description: |
+  The agent's system prompt should pick up `.mod8/context.md` (when
+  present) so every model sees the same per-project brief.  These specs
+  pin the loader behavior (walk-up, size cap, $HOME boundary), the
+  init/context CLI surface, and the prompt-injection footer.
+
+  Each test runs in a fresh sandbox dir.  We use `MOD8_CONFIG_DIR` (set
+  per-test by the verify runner) as the working directory — it doubles
+  as both the config root AND a throwaway project root.
+
+tests:
+  - name: mod8 init creates all three .mod8/ files
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 init && ls .mod8/
+    expect:
+      stdout_contains:
+        - "✓ created .mod8/context.md"
+        - "✓ created .mod8/decisions.md"
+        - "✓ created .mod8/architecture.md"
+        - "context.md"
+        - "decisions.md"
+        - "architecture.md"
+
+  - name: mod8 init template includes all required sections
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 init >/dev/null && cat .mod8/context.md
+    expect:
+      stdout_contains:
+        - "## Project summary"
+        - "## Stack"
+        - "## Important folders"
+        - "## Coding conventions"
+        - "## Rules"
+        - "## Decisions"
+        - "## Do-not-touch"
+
+  - name: mod8 init refuses to clobber existing files without --force
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 init >/dev/null && mod8 init
+    expect:
+      stdout_contains:
+        - ".mod8/context.md already exists"
+        - ".mod8/decisions.md already exists"
+        - "Nothing changed"
+
+  - name: mod8 init --force rewrites and backs up
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 init >/dev/null && echo "old" > .mod8/context.md && mod8 init --force && cat .mod8/context.md.bak
+    expect:
+      stdout_contains:
+        - "↻ rewrote .mod8/context.md"
+        - "old"
+
+  - name: mod8 context reports NOT FOUND in an empty dir
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 context
+    expect:
+      stdout_contains:
+        - "Project context:"
+        - "NOT FOUND"
+        - "Run"
+        - "mod8 init"
+
+  - name: mod8 context reports FOUND with size and path after init
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 init >/dev/null && mod8 context
+    expect:
+      stdout_contains:
+        - "Project context:"
+        - "FOUND"
+        - ".mod8/context.md"
+        - "bytes"
+        - "tokens"
+        - "truncated:   no"
+
+  - name: walk-up finds .mod8/context.md in a parent dir
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 init >/dev/null && mkdir -p apps/web/src && cd apps/web/src && mod8 context
+    expect:
+      stdout_contains:
+        - "FOUND"
+        - ".mod8/context.md"
+        - "3 levels up"
+
+  - name: dev:agent-system has no project-context block in a bare dir
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 dev:agent-system
+    expect:
+      stdout_contains:
+        - "You are a coding agent"
+      stdout_not_contains:
+        - "# Project context"
+        - "Project context is guidance"
+
+  - name: dev:agent-system injects project-context block when .mod8/context.md exists
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 init >/dev/null && mod8 dev:agent-system
+    expect:
+      stdout_contains:
+        - "# Project context (loaded from"
+        - ".mod8/context.md"
+        - "## Project summary"
+        - "Project context is guidance, not absolute truth"
+
+  - name: dev:agent-system reflects edits to .mod8/context.md (re-read every call)
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 init >/dev/null && echo "PROJECT_MARKER_42" >> .mod8/context.md && mod8 dev:agent-system
+    expect:
+      stdout_contains:
+        - "PROJECT_MARKER_42"
+
+  - name: oversized .mod8/context.md is truncated at the byte cap
+    shell: |
+      cd $MOD8_CONFIG_DIR && mkdir -p .mod8 && python3 -c "open('.mod8/context.md','w').write('# big\n' + 'x' * 20000)" && mod8 context
+    expect:
+      stdout_contains:
+        - "FOUND"
+        - "truncated:"
+        - "yes"
+        - "cap 16384 bytes"
+
+  - name: provider id passes through unchanged (shaping seam exists but is pass-through)
+    shell: |
+      cd $MOD8_CONFIG_DIR && mod8 init >/dev/null && mod8 dev:agent-system --provider deepseek
+    expect:
+      stdout_contains:
+        - "You are the deepseek model"
+        - "# Project context (loaded from"
+        - "## Project summary"
+
+  - name: $HOME boundary — never load context from HOME itself
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/sub
+          mkdir -p $MOD8_CONFIG_DIR/.mod8
+          echo "# bait" > $MOD8_CONFIG_DIR/.mod8/context.md
+    shell: |
+      cd $MOD8_CONFIG_DIR/sub && HOME=$MOD8_CONFIG_DIR mod8 context
+    expect:
+      stdout_contains:
+        - "NOT FOUND"
+        - "stopped at $HOME"

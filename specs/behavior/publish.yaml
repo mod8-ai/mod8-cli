@@ -1,0 +1,187 @@
+name: behavior — mod8 publish (static site MVP)
+description: |
+  The `mod8 publish` command packages the current project's static build
+  output and ships it to <slug>.apps.mod8.ai.  Dry-run by default; real
+  upload requires --confirm AND a logged-in account.
+
+  This spec pins behavior the user will actually trip over:
+    - Auto-detects dist / out / build / public / _site / site
+    - Slugifies the project name to a DNS-safe form
+    - Rejects reserved subdomains (www, admin, mod8, etc.)
+    - Rejects too-short / too-long / bad-char slugs
+    - Refuses real upload without --confirm
+    - Refuses real upload without `mod8 login`
+
+tests:
+  - name: dry run reports plan and exits 0
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/myapp/dist
+          echo '<h1>hi</h1>' > $MOD8_CONFIG_DIR/myapp/dist/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/myapp && mod8 publish'
+    expect:
+      stdout_contains:
+        - 'Publish plan (dry run)'
+        - 'myapp'
+        - 'https://myapp.apps.mod8.ai'
+        - 'Dry run — nothing uploaded'
+      exit_code: 0
+
+  - name: detects build/ as output dir
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/cra-app/build
+          echo '<h1>cra</h1>' > $MOD8_CONFIG_DIR/cra-app/build/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/cra-app && mod8 publish'
+    expect:
+      stdout_contains:
+        - 'cra-app/build'
+        - 'files     1'
+      exit_code: 0
+
+  - name: detects out/ (Next.js export) as output dir
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/next-app/out
+          echo '<h1>nx</h1>' > $MOD8_CONFIG_DIR/next-app/out/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/next-app && mod8 publish'
+    expect:
+      stdout_contains:
+        - 'next-app/out'
+      exit_code: 0
+
+  - name: falls back to cwd when index.html sits at the project root
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/hand-rolled
+          echo '<h1>static</h1>' > $MOD8_CONFIG_DIR/hand-rolled/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/hand-rolled && mod8 publish'
+    expect:
+      stdout_contains:
+        - 'hand-rolled'
+        - 'files     1'
+      exit_code: 0
+
+  - name: errors clearly when no output dir is found
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/no-build
+          echo 'README' > $MOD8_CONFIG_DIR/no-build/README.md
+    shell: 'cd $MOD8_CONFIG_DIR/no-build && mod8 publish'
+    expect:
+      stderr_contains: "couldn't find a static build output"
+      exit_code: 2
+
+  - name: --slug normalizes mixed case (PropFlow -> propflow)
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/mixed-case/dist
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/mixed-case/dist/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/mixed-case && mod8 publish --slug PropFlow'
+    expect:
+      stdout_contains: 'slug      propflow'
+      exit_code: 0
+
+  - name: --slug rejects reserved name (admin)
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/admin-test/dist
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/admin-test/dist/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/admin-test && mod8 publish --slug admin'
+    expect:
+      stderr_contains: 'reserved'
+      exit_code: 1
+
+  - name: --slug rejects too-short slug
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/short-test/dist
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/short-test/dist/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/short-test && mod8 publish --slug ab'
+    expect:
+      stderr_contains: 'too short'
+      exit_code: 1
+
+  - name: --dir override is honored
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/custom-dir/weird-output
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/custom-dir/weird-output/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/custom-dir && mod8 publish --dir weird-output'
+    expect:
+      stdout_contains: 'custom-dir/weird-output'
+      exit_code: 0
+
+  - name: --confirm without login fails clearly (does not upload)
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/needs-login/dist
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/needs-login/dist/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/needs-login && mod8 publish --confirm'
+    expect:
+      stderr_contains: 'not logged in'
+      exit_code: 2
+
+  - name: excludes node_modules from the upload plan
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/excludes/dist/node_modules/foo
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/excludes/dist/index.html
+          echo 'leaked' > $MOD8_CONFIG_DIR/excludes/dist/node_modules/foo/secret.js
+    shell: 'cd $MOD8_CONFIG_DIR/excludes && mod8 publish'
+    expect:
+      stdout_contains: 'files     1'
+      exit_code: 0
+
+  - name: excludes .env from the upload plan
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/envtest/dist
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/envtest/dist/index.html
+          echo 'SECRET=abc' > $MOD8_CONFIG_DIR/envtest/dist/.env
+    shell: 'cd $MOD8_CONFIG_DIR/envtest && mod8 publish'
+    expect:
+      stdout_contains: 'files     1'
+      exit_code: 0
+
+  - name: --domain attaches a custom domain to the plan
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/customdom/dist
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/customdom/dist/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/customdom && mod8 publish --domain propflow.com'
+    expect:
+      stdout_contains:
+        - 'domain    https://propflow.com'
+        - 'point a CNAME from propflow.com'
+      exit_code: 0
+
+  - name: --domain rejects garbage (no dot)
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/bad-dom/dist
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/bad-dom/dist/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/bad-dom && mod8 publish --domain notadomain'
+    expect:
+      stderr_contains: "doesn't look like a domain"
+      exit_code: 1
+
+  - name: --domain rejects mod8 own subdomain
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/self-dom/dist
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/self-dom/dist/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/self-dom && mod8 publish --domain anything.apps.mod8.ai'
+    expect:
+      stderr_contains: "under mod8's own subdomain"
+      exit_code: 1
+
+  - name: --domain lowercases + strips https://
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR/lower-dom/dist
+          echo '<h1>x</h1>' > $MOD8_CONFIG_DIR/lower-dom/dist/index.html
+    shell: 'cd $MOD8_CONFIG_DIR/lower-dom && mod8 publish --domain https://PropFlow.COM/'
+    expect:
+      stdout_contains: 'domain    https://propflow.com'
+      exit_code: 0

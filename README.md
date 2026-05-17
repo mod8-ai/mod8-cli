@@ -134,37 +134,58 @@ That's the whole product.
 ## Install
 
 ```bash
-npm install -g mod8
+npm install -g mod8-cli
 ```
+
+(The npm package is `mod8-cli`; the terminal command is `mod8`.)
 
 Requires Node 20+.
 
-Then add at least one key:
+You have two ways to bring keys to mod8.
+
+### Option A — `mod8 login` (recommended)
+
+One mod8 account, one bill, every provider.
+
+```bash
+mod8 login                  # opens https://mod8.ai/cli-login,
+                            # paste the sk-mod8-… key it shows you
+```
+
+After that, `mod8 -c/-o/-g/-d "…"` all route through the mod8 proxy. The
+per-turn stats line shows what mod8 charged your balance.
+
+```bash
+mod8 logout                 # drop credentials, fall back to local providers.json
+```
+
+### Option B — BYOK (bring your own keys)
 
 ```bash
 mod8 keys set anthropic     # or: openai, google, deepseek, mistral,
                             #     groq, openrouter, xai, together
 ```
 
-For a provider mod8 doesn't know yet (any OpenAI-compatible API):
+For any OpenAI-compatible API mod8 doesn't already know:
 
 ```bash
 mod8 add-provider           # interactive: paste key, confirm name/baseUrl/model
 ```
 
-Or set an env var if you'd rather not store on disk:
+Or skip on-disk storage and use an env var:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Then:
+### Day-to-day
 
 ```bash
 mod8 "say hi"               # one-shot to your default
-mod8 -c "say hi"            # one-shot to anthropic specifically
+mod8 -c "say hi"            # → anthropic
 mod8 -o "say hi"            # → openai
 mod8 -g "say hi"            # → google
+mod8 -d "say hi"            # → deepseek
 mod8 --all "say hi"         # fan-out, side-by-side
 mod8 new                    # start a chat session
 mod8 list                   # see recent sessions
