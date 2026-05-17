@@ -1,133 +1,31 @@
 # mod8
 
-**Talk to any LLM from your terminal — Claude, GPT, Gemini, DeepSeek, Mistral, Groq, anything OpenAI-compatible. BYOK.**
+**The AI coding terminal that picks the best model for you.**
 
-No SaaS. No telemetry. Your keys stay in `~/.config/mod8/providers.json` (mode 0600). One CLI, every model.
+mod8 routes each task to Claude, GPT, Gemini, or DeepSeek — compares them side-by-side, switches mid-task, edits files, runs shells, and publishes what you build to a free URL.
+
+One CLI. Every model. No vendor lock-in.
+
+```bash
+npm install -g mod8-cli
+```
 
 ---
 
-## What it feels like
+## What makes it different
 
-Install once, then:
+Every other AI coding tool ties you to one provider. mod8 doesn't.
 
-```text
-$ mod8 keys set anthropic
-Enter API key for Anthropic (Claude): ************************************
-✓ Saved key for Anthropic (Claude)
-  Stored at /Users/you/.config/mod8/providers.json (file is 0600, only readable by you)
-
-$ mod8 "what's the difference between a tarball and a wheel"
-A tarball (.tar.gz) is the generic compressed-archive format used across
-many ecosystems — Python sdists, Ruby gems, npm packages all ship as
-tarballs. A wheel (.whl) is Python-specific, a built distribution that
-skips the build step on install. tl;dr: tarball = source, wheel = built.
-
-— claude-sonnet-4-6  324 tok · 1.21s · <$0.001
-```
-
-That was a one-shot. Now go interactive:
-
-```text
-$ mod8 new
-
-✻ mod8
-  switch to claude:  ask naturally — "go", "let's work", "let me talk to claude"
-  use any provider:  "use deepseek", "ask grok", "switch to mistral"
-  side-by-side:      "compare all" or /compare
-  list providers:    /providers      ·  back to mod8: /mod8 or @mod8
-  clear history:     /clear          ·  quit: /exit · cancel: esc
-
-›  i'm thinking about adding rate limiting to my api gateway. unsure where to put it.
-
-✻ mod8
-│ Are you protecting downstream services from a single misbehaving caller, or
-│ enforcing per-user quotas across many endpoints? Those usually live in
-│ different layers.
-│ 246 tok · 1.40s · <$0.001
-
-›  per-user quotas across the whole api
-
-✻ mod8
-│ Then sticking it at the gateway makes sense — you only count once instead
-│ of summing across services. Edge gateway with a Redis-backed token bucket
-│ is the standard pattern. Want claude to sketch the wiring?
-│ 312 tok · 1.62s · <$0.001
-
-›  yes go
-
-────────────────────────────────────────────────────────────
-  ◆  → switching to claude  (work mode)
-────────────────────────────────────────────────────────────
-
-›  yes go
-
-◆ claude
-│ Here's a minimal Express middleware that does it. Redis with a sliding
-│ window over 60s, 100 requests per user…
-│ 1.4k tok · 4.30s · $0.012
-```
-
-Add another provider, switch to it mid-conversation:
-
-```text
-$ mod8 add-provider
-paste key: gsk_***************************
-✓ Looks like Groq (groq, openai-compat).
-provider id [groq]:
-display name [Groq]:
-api type (anthropic | openai-compat | gemini) [openai-compat]:
-base URL [https://api.groq.com/openai/v1]:
-default model [llama-3.3-70b-versatile]:
-✓ Saved Groq (groq) — key gsk_***********6vQp, color ●
-```
-
-Back in chat:
-
-```text
-›  use groq, give me the same answer but shorter
-
-────────────────────────────────────────────────────────────
-  ◆  → switching to groq  (groq mode)
-────────────────────────────────────────────────────────────
-
-›  give me the same answer but shorter
-
-◆ groq
-│ const limiter = rateLimit({ windowMs: 60_000, max: 100, keyGenerator: r => r.user.id, store: new RedisStore({ client }) }); app.use(limiter);
-│ 184 tok · 0.42s · <$0.001
-```
-
-Side-by-side, all configured providers at once:
-
-```text
-›  compare all: write a haiku about cron jobs
-
-◆ claude
-│ Midnight tick repeats —
-│ silent worker in the dark,
-│ logs the only sound.
-│ 28 tok · 1.10s · <$0.001
-
-◆ groq
-│ Cron jobs run unseen,
-│ scheduled tasks in shadow,
-│ servers hum at night.
-│ 24 tok · 0.31s · <$0.001
-
-◆ deepseek
-│ Five stars then asterisk,
-│ time slices marching forward,
-│ work without applause.
-│ 26 tok · 0.88s · <$0.001
-```
-
-Out of chat, you can also do this from one shell line:
-
-```text
-$ mod8 --all "summarize this commit message in 5 words" < commit.txt
-```
-
-That's the whole product.
+| Feature | What it does |
+| --- | --- |
+| 🎯 **Smart routing** | Knows which model is best for what — auto-recommends Claude for React, GPT for APIs, Gemini for huge contexts, DeepSeek for cheap iteration. |
+| 🔀 **Mid-task switching** | "use gpt" / "ask claude" / `/handoff gemini` — change provider in the same conversation without losing context. |
+| ⚖️ **Side-by-side compare** | Run the same prompt across every configured provider, see all answers in one screen. |
+| 🧠 **Auto-handoff** | Provider hits its context limit? mod8 silently switches to a bigger-window model. |
+| 📊 **Per-project tracking** | Tags every turn with `(project, topic, provider)`. Dashboard at [mod8.ai](https://mod8.ai) shows per-project spend, provider mix, topic distribution. |
+| 🚀 **Publish to a URL** | `mod8 publish` ships any static site to `<slug>.apps.mod8.ai` with real HTTPS — one command. |
+| 🛡️ **Anti-loop ledger** | Write-tracking ledger refuses silent overwrites. No more "agent rewrote its own files for 10 minutes". |
+| 🎓 **Learns YOU** | After 2+ overrides for a topic, the comparison panel floats your preferred provider to the top with a ★ "your usual pick" badge. |
 
 ---
 
@@ -137,77 +35,125 @@ That's the whole product.
 npm install -g mod8-cli
 ```
 
-(The npm package is `mod8-cli`; the terminal command is `mod8`.)
+Requires Node 20+. The terminal command is `mod8`; the npm package is `mod8-cli`.
 
-Requires Node 20+.
+Then pick auth:
 
-You have two ways to bring keys to mod8.
+### Option A — `mod8 login` (hosted proxy)
 
-### Option A — `mod8 login` (recommended)
-
-One mod8 account, one bill, every provider.
+One account, one bill, every provider.
 
 ```bash
-mod8 login                  # opens https://mod8.ai/cli-login,
-                            # paste the sk-mod8-… key it shows you
+mod8 login                  # opens mod8.ai, paste the sk-mod8-… key
 ```
 
-After that, `mod8 -c/-o/-g/-d "…"` all route through the mod8 proxy. The
-per-turn stats line shows what mod8 charged your balance.
-
-```bash
-mod8 logout                 # drop credentials, fall back to local providers.json
-```
+After login, every request goes through the mod8 proxy. You see live spend on the [mod8.ai dashboard](https://mod8.ai).
 
 ### Option B — BYOK (bring your own keys)
 
 ```bash
-mod8 keys set anthropic     # or: openai, google, deepseek, mistral,
-                            #     groq, openrouter, xai, together
+mod8 keys set anthropic     # also: openai, google, deepseek, mistral,
+                            # groq, openrouter, xai, together
+mod8 add-provider           # for any other OpenAI-compatible API
 ```
 
-For any OpenAI-compatible API mod8 doesn't already know:
+Keys are stored at `~/.config/mod8/providers.json` (mode `0600`, never leaves your machine).
 
-```bash
-mod8 add-provider           # interactive: paste key, confirm name/baseUrl/model
-```
+---
 
-Or skip on-disk storage and use an env var:
+## Quick tour
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+```text
+$ mod8 new
 
-### Day-to-day
+✻ mod8
+  start chatting · "go" hands off to claude · "use gpt" / "use gemini" switches
+  /compare runs all providers · /handoff <name> mid-stream · /publish ships sites
 
-```bash
-mod8 "say hi"               # one-shot to your default
-mod8 -c "say hi"            # → anthropic
-mod8 -o "say hi"            # → openai
-mod8 -g "say hi"            # → google
-mod8 -d "say hi"            # → deepseek
-mod8 --all "say hi"         # fan-out, side-by-side
-mod8 new                    # start a chat session
-mod8 list                   # see recent sessions
-mod8 resume <id>            # pick up where you left off
-mod8 keys list              # who's configured
-mod8 providers              # detailed provider config
-mod8 verify                 # run the built-in self-test suite
+›  i want to build a landing page for a plumber
+
+→ Topic shift detected: frontend / UI work
+  Typical turn: ~16k tokens · ~5 turns per task
+
+   Provider    Speed    $/turn    Code     Performance   Why
+   ──────────────────────────────────────────────────────────────────
+   ⭐ Claude    ★★★☆☆  $0.054   ★★★★★   ★★★★★  Best at React, Tailwind, components
+      GPT       ★★★★★  $0.040   ★★★★☆   ★★★★★  Fast iteration, weaker on Tailwind
+      Gemini    ★★★★☆  $0.018   ★★★☆☆   ★★★★☆  Decent UI, less precise CSS
+      DeepSeek  ★★★☆☆  $0.013   ★★★☆☆   ★★★☆☆  Cheapest — expect a review pass
+
+  Currently: Claude (already the recommendation ✓)
+  "use claude" · "use gpt" · "use gemini" · "use deepseek" · or just keep going
+
+›  go
+
+────────────────────────────────────────────────────────────
+  ◆  → switching to claude  (work mode)
+────────────────────────────────────────────────────────────
+
+◆ claude  · goal: scaffold a plumber landing page with React + Tailwind · step 1/8
+│ → write_file: src/Landing.tsx
+│ → write_file: src/components/Hero.tsx
+│ → bash: npm run build
+│ ✓ done. dist/ ready to publish.
+
+›  /publish --confirm
+
+→ Publishing
+  project   plumber-site
+  slug      plumber-site
+  url       https://plumber-site.apps.mod8.ai
+  files     12 · size 47 KB
+
+✓ Published to https://plumber-site.apps.mod8.ai
 ```
 
 ---
 
-## What's in the box
+## Commands
 
-| Category | Detail |
-| --- | --- |
-| Built-in providers | anthropic, openai, google, deepseek, mistral, groq, openrouter, xai, together |
-| Custom providers | any OpenAI-compatible API via `mod8 add-provider` |
-| Storage | `~/.config/mod8/providers.json` (keys, mode 0600) and `~/.config/mod8/sessions/*.json` (chat history) |
-| Pricing | per-model token costs in every footer |
-| Streaming | yes, all providers; cancel with `esc` mid-stream |
-| Pipe / `@file` | `cat x | mod8 "…"` and `mod8 "review @path/to/file"` both work |
-| Self-test | `mod8 verify` runs 50+ sandboxed tests against mocked + real API paths |
+```bash
+mod8 new                    # start a chat session (auto-saved)
+mod8 list                   # list recent sessions
+mod8 resume <id>            # pick up where you left off
+
+mod8 "say hi"               # one-shot to your default
+mod8 -c "…"                 # → claude (anthropic)
+mod8 -o "…"                 # → gpt    (openai)
+mod8 -g "…"                 # → gemini (google)
+mod8 -d "…"                 # → deepseek
+mod8 --all "…"              # fan out to every configured provider, side-by-side
+
+mod8 publish                # dry-run: show what would ship
+mod8 publish --confirm      # ship to <slug>.apps.mod8.ai
+mod8 publish --domain site.com  # also bind a custom domain
+
+mod8 keys list              # who's configured
+mod8 add-provider           # add any OpenAI-compatible API
+mod8 verify                 # run 252 self-tests
+```
+
+Inside chat, you can also:
+
+```
+/compare <prompt>           explicit fan-out
+/handoff <provider>         switch mid-stream (preserves context)
+/files                      list everything written this session
+/status                     full session snapshot (zero LLM call, can't lie)
+/clear                      start fresh
+/exit                       quit
+```
+
+---
+
+## Dashboard at [mod8.ai](https://mod8.ai)
+
+If you `mod8 login`, every session is tracked per-project. Visit the dashboard to see:
+
+- **Projects** — one card per `cwd` where you ran mod8, with totals + provider breakdown.
+- **Sites** — your published `<slug>.apps.mod8.ai` URLs, file counts, last publish times.
+- **Spend** — token costs, charged amounts, balance.
+- **API key** — issue / rotate your `sk-mod8-…` key.
 
 ---
 
@@ -215,9 +161,11 @@ mod8 verify                 # run the built-in self-test suite
 
 | File or env var | What it holds |
 | --- | --- |
-| `~/.config/mod8/providers.json` | API keys + per-provider config (api type, base URL, default model, color). Mode `0600`. |
-| `~/.config/mod8/config.json` | `default` (which provider answers a bare `mod8 "..."`), `allConsent` (first-run gate). |
-| `~/.config/mod8/sessions/*.json` | Saved chat sessions, auto-titled after the second turn. Mode `0600`. |
+| `~/.config/mod8/auth.json` | mod8 hosted-proxy credentials (after `mod8 login`). Mode `0600`. |
+| `~/.config/mod8/providers.json` | BYOK API keys + per-provider config. Mode `0600`. |
+| `~/.config/mod8/config.json` | Default provider, first-run consent state. |
+| `~/.config/mod8/sessions/*.json` | Saved chat sessions, auto-titled after the second turn. |
+| `~/.mod8/routing-prefs.json` | Per-user routing preferences — learned from your overrides. |
 | `MOD8_CONFIG_DIR` | Override the config root entirely (used by `mod8 verify`'s sandbox). |
 | `MOD8_HOST_MODEL`, `MOD8_WORK_MODEL` | Override the default chat models. |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY` | Override the stored key for that provider. |
@@ -226,11 +174,19 @@ mod8 verify                 # run the built-in self-test suite
 
 ## Privacy
 
-Everything is local. mod8 is a thin client that talks directly to provider APIs.
-There is no mod8 server. No analytics, no telemetry, no key escrow.
+**BYOK mode (Option B):** mod8 talks directly to provider APIs. Your keys live in `~/.config/mod8/providers.json` (mode 0600). No mod8 server is in the loop.
 
-If you want to verify, the verify suite has a test that asserts `providers.json`
-is created with mode `0600`, and the source is short enough to read in an hour.
+**Hosted mode (Option A — `mod8 login`):** Requests go through the mod8 proxy at mod8.ai. The proxy forwards to providers using mod8's master keys, deducts from your balance, and records the turn for the dashboard. mod8 does NOT store your prompts or responses — only metadata: project name, topic, token counts, cost.
+
+The source is short enough to audit in an evening. `mod8 verify` runs 252 sandboxed tests covering every user-facing flow.
+
+---
+
+## Links
+
+- 🌐 [mod8.ai](https://mod8.ai) — sign up, dashboard, docs
+- 🐙 [GitHub](https://github.com/mod8-ai/mod8-cli) — issues, discussions, source
+- 📦 [npm](https://www.npmjs.com/package/mod8-cli) — releases
 
 ---
 
