@@ -1,7 +1,7 @@
 {
   "name": "mod8-cli",
-  "version": "0.5.25",
-  "description": "mod8 — multi-provider AI agent CLI. Orchestrate Claude, GPT, Gemini, DeepSeek from one terminal. Smart routing, mid-task handoff, side-by-side comparison, static site hosting. BYOK or `mod8 login` for the hosted proxy.",
+  "version": "0.5.26",
+  "description": "The AI coding terminal that picks the best model for you. mod8 routes each task to Claude, GPT, Gemini, or DeepSeek — compares them side-by-side, switches mid-task, and ships sites with one command.",
   "type": "module",
   "bin": {
     "mod8": "./bin/mod8.js"

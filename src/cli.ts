@@ -31,7 +31,7 @@ program
   .description(
     'Talk to any LLM from your terminal — Claude, GPT, Gemini, DeepSeek, Mistral, Groq, anything OpenAI-compatible. BYOK.'
   )
-  .version('0.5.25');
+  .version('0.5.26');
 
 program
   .argument('[prompt]', 'prompt to send (uses default provider unless a flag is set)')
