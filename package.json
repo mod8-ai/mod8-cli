@@ -1,7 +1,7 @@
 {
   "name": "mod8-cli",
-  "version": "0.5.24",
-  "description": "Talk to any LLM from your terminal — Claude, GPT, Gemini, DeepSeek, Mistral, Groq, anything OpenAI-compatible. BYOK or `mod8 login` to use the hosted proxy.",
+  "version": "0.5.25",
+  "description": "mod8 — multi-provider AI agent CLI. Orchestrate Claude, GPT, Gemini, DeepSeek from one terminal. Smart routing, mid-task handoff, side-by-side comparison, static site hosting. BYOK or `mod8 login` for the hosted proxy.",
   "type": "module",
   "bin": {
     "mod8": "./bin/mod8.js"
