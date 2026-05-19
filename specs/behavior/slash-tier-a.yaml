@@ -1,0 +1,134 @@
+name: behavior — Tier A slash commands (/goal, /cost, /help, /preview)
+description: |
+  Pins the four parsers that turn user text into slash commands.  These
+  fire BEFORE any LLM call, so the parsers are the source of truth — a
+  silent regression here means the user types `/goal` and gets a model
+  hallucination back instead of the locked-in goal.
+
+  Why we pin parsers and not the full handler flow:
+    * /help is a static string — there's nothing to regress beyond the
+      parser recognizing it.
+    * /cost reads from `lastUsage` which only exists after a real turn;
+      stubbing it adds more test surface than the feature itself.
+    * /goal mutates a React ref + injects into the system prompt; the
+      important invariant is "the parser saw it, and treated `clear` as
+      a sentinel instead of a goal named 'clear'".
+    * /preview spawns a real child process and watches stdout for a URL.
+      That's an integration concern covered by manual smoke-test, not a
+      thing we'd want running in CI (it would actually start `npm run dev`
+      in someone's mod8 checkout).
+
+  The parsers themselves are pure functions of the raw input string, so
+  pinning them via dev:parse-slash gives 100% coverage of the user-facing
+  intent classification with zero side-effects.
+
+tests:
+  # /help — accept variants the help text + muscle-memory cover.
+  - name: /help is recognized
+    shell: 'mod8 dev:parse-slash "/help"'
+    expect:
+      stdout_contains: 'help=true'
+
+  - name: /? is recognized as help
+    shell: 'mod8 dev:parse-slash "/?"'
+    expect:
+      stdout_contains: 'help=true'
+
+  - name: /commands is recognized as help
+    shell: 'mod8 dev:parse-slash "/commands"'
+    expect:
+      stdout_contains: 'help=true'
+
+  - name: /help with extra trailing space still matches
+    shell: 'mod8 dev:parse-slash "/help   "'
+    expect:
+      stdout_contains: 'help=true'
+
+  - name: /helpme is NOT help (avoid accidental matches)
+    shell: 'mod8 dev:parse-slash "/helpme"'
+    expect:
+      stdout_contains: 'help=false'
+
+  # /cost — exact match, no args.
+  - name: /cost is recognized
+    shell: 'mod8 dev:parse-slash "/cost"'
+    expect:
+      stdout_contains: 'cost=true'
+
+  - name: case-insensitive /COST
+    shell: 'mod8 dev:parse-slash "/COST"'
+    expect:
+      stdout_contains: 'cost=true'
+
+  - name: /cost with trailing arg is NOT cost (we want exact)
+    shell: 'mod8 dev:parse-slash "/cost yesterday"'
+    expect:
+      stdout_contains: 'cost=false'
+
+  # /goal — set + clear sentinels.
+  - name: bare /goal is treated as clear
+    shell: 'mod8 dev:parse-slash "/goal"'
+    expect:
+      stdout_contains: 'goal=clear'
+
+  - name: /goal clear is the clear sentinel
+    shell: 'mod8 dev:parse-slash "/goal clear"'
+    expect:
+      stdout_contains: 'goal=clear'
+
+  - name: /goal none is the clear sentinel
+    shell: 'mod8 dev:parse-slash "/goal none"'
+    expect:
+      stdout_contains: 'goal=clear'
+
+  - name: /goal reset is the clear sentinel
+    shell: 'mod8 dev:parse-slash "/goal reset"'
+    expect:
+      stdout_contains: 'goal=clear'
+
+  - name: /goal <text> locks in the text verbatim
+    shell: 'mod8 dev:parse-slash "/goal ship the landing page tonight"'
+    expect:
+      stdout_contains: 'goal=set:ship the landing page tonight'
+
+  - name: /goalkeeper is NOT a goal command
+    shell: 'mod8 dev:parse-slash "/goalkeeper"'
+    expect:
+      stdout_contains: 'goal=none'
+
+  # /preview — auto-detect vs explicit script.
+  - name: bare /preview is auto mode
+    shell: 'mod8 dev:parse-slash "/preview"'
+    expect:
+      stdout_contains: 'preview=auto'
+
+  - name: /preview dev picks the dev script
+    shell: 'mod8 dev:parse-slash "/preview dev"'
+    expect:
+      stdout_contains: 'preview=script:dev'
+
+  - name: /preview start picks the start script
+    shell: 'mod8 dev:parse-slash "/preview start"'
+    expect:
+      stdout_contains: 'preview=script:start'
+
+  - name: /preview with dashed script name
+    shell: 'mod8 dev:parse-slash "/preview dev-server"'
+    expect:
+      stdout_contains: 'preview=script:dev-server'
+
+  - name: /previewer is NOT preview
+    shell: 'mod8 dev:parse-slash "/previewer"'
+    expect:
+      stdout_contains: 'preview=none'
+
+  # Non-matches must stay non-matches across the board.
+  - name: plain text matches none of the four
+    shell: 'mod8 dev:parse-slash "build me a landing page"'
+    expect:
+      stdout_matches: 'goal=none cost=false help=false preview=none'
+
+  - name: empty input matches none
+    shell: 'mod8 dev:parse-slash ""'
+    expect:
+      stdout_matches: 'goal=none cost=false help=false preview=none'

@@ -31,7 +31,7 @@ program
   .description(
     'Talk to any LLM from your terminal — Claude, GPT, Gemini, DeepSeek, Mistral, Groq, anything OpenAI-compatible. BYOK.'
   )
-  .version('0.5.28');
+  .version('0.5.29');
 
 program
   .argument('[prompt]', 'prompt to send (uses default provider unless a flag is set)')
@@ -384,6 +384,33 @@ program
       return;
     }
     console.log(`intent=open url=${r.explicitUrl ?? 'null'}`);
+  });
+
+// Dev endpoint: pin the four Tier-A slash command parsers (/goal, /cost,
+// /help, /preview).  Behavioral specs call this so the parsers can't
+// silently drift — every command needs to keep recognizing the inputs
+// the help text advertises, plus reject obvious non-matches.
+program
+  .command('dev:parse-slash <input>')
+  .description('show how the Tier-A slash parsers see an input (debug only)')
+  .action(async (input: string) => {
+    const {
+      parseGoalCommand,
+      GOAL_CLEAR_SENTINEL,
+      isCostCommand,
+      isHelpCommand,
+      parsePreviewCommand,
+      PREVIEW_AUTO_SENTINEL,
+    } = await import('./commands/intentRouting.js');
+    const g = parseGoalCommand(input);
+    const goalLabel =
+      g === null ? 'none' : g === GOAL_CLEAR_SENTINEL ? 'clear' : `set:${g}`;
+    const p = parsePreviewCommand(input);
+    const previewLabel =
+      p === null ? 'none' : p === PREVIEW_AUTO_SENTINEL ? 'auto' : `script:${p}`;
+    console.log(
+      `goal=${goalLabel} cost=${isCostCommand(input)} help=${isHelpCommand(input)} preview=${previewLabel}`
+    );
   });
 
 // Dev endpoint: print which model would be sent to the provider, with the

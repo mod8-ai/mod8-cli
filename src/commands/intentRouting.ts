@@ -511,3 +511,50 @@ export function findRecentUrl(
   }
   return null;
 }
+
+/**
+ * Parse a `/goal …` command.  Returns the goal text on set, the literal
+ * sentinel `'__CLEAR__'` on clear, or `null` if this isn't a /goal at all.
+ * Examples:
+ *   /goal ship landing page by friday  → "ship landing page by friday"
+ *   /goal clear                        → '__CLEAR__'
+ *   /goal                              → '__CLEAR__' (bare /goal acts as
+ *                                        clear — shorter to type, common
+ *                                        pattern in TUIs)
+ *   anything else                      → null
+ */
+export const GOAL_CLEAR_SENTINEL = '__CLEAR__';
+export function parseGoalCommand(input: string): string | null {
+  const m = input.match(/^\s*\/goal(?:\s+([\s\S]+))?\s*$/i);
+  if (!m) return null;
+  const arg = (m[1] ?? '').trim();
+  if (!arg || /^(clear|none|off|unset|reset)$/i.test(arg)) {
+    return GOAL_CLEAR_SENTINEL;
+  }
+  return arg;
+}
+
+/** True when the input is exactly the `/cost` command (no args).  Surfaces
+ *  this-session spend per provider + total. */
+export function isCostCommand(input: string): boolean {
+  return /^\s*\/cost\s*$/i.test(input);
+}
+
+/** True when the input is the `/help` or `/?` command. */
+export function isHelpCommand(input: string): boolean {
+  return /^\s*\/(help|\?|commands)\s*$/i.test(input);
+}
+
+/** Parse `/preview` with an optional script-name override:
+ *   /preview          → auto-detect (npm run dev / start / serve)
+ *   /preview dev      → run `npm run dev`
+ *   /preview start    → run `npm run start`
+ *   /preview <script> → run `npm run <script>`
+ * Returns the override script name, the sentinel `'__AUTO__'` for the bare
+ * form, or `null` when this isn't a /preview command at all. */
+export const PREVIEW_AUTO_SENTINEL = '__AUTO__';
+export function parsePreviewCommand(input: string): string | null {
+  const m = input.match(/^\s*\/preview(?:\s+([a-z0-9:_-]{1,40}))?\s*$/i);
+  if (!m) return null;
+  return m[1] ? m[1].trim() : PREVIEW_AUTO_SENTINEL;
+}

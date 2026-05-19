@@ -83,7 +83,14 @@ import {
   isNegative,
   fallbackDecision,
   AUTO_FALLBACK_THRESHOLD,
+  parseGoalCommand,
+  GOAL_CLEAR_SENTINEL,
+  isCostCommand,
+  isHelpCommand,
+  parsePreviewCommand,
+  PREVIEW_AUTO_SENTINEL,
 } from './intentRouting.js';
+import { runPreview, killAllPreviewProcs } from './previewServer.js';
 import { findApiKey, sanitizeKeys, maskApiKey } from '../util/secrets.js';
 import { explainError } from '../providers/errorHints.js';
 import type { ProviderTemplate } from '../providers/registry.js';
@@ -884,6 +891,10 @@ function App({
   // bug where typing "open the browser" kept re-triggering after a
   // previous "no" answer.  Keyed by `${input.toLowerCase()}:${candidate}`.
   const rejectedFuzzyRef = useRef<Set<string>>(new Set());
+  // /goal — current session goal injected into BOTH host and work system
+  // prompts so every provider stays on-task across turns. Cleared by
+  // /clear or `/goal clear`.
+  const goalRef = useRef<string | null>(null);
 
   // Resolve a provider entry, falling back to a proxy-synthesized entry when
   // the user is logged in via `mod8 login` and asking for one of the four
@@ -1327,6 +1338,8 @@ function App({
         recommendedFor: new Set(),
         userOverrode: false,
       };
+      goalRef.current = null;
+      killAllPreviewProcs();
       return;
     }
 
@@ -1390,6 +1403,81 @@ function App({
           `  ${fileSummary}${last}\n` +
           `  cwd: ${process.cwd()}`,
       });
+      return;
+    }
+
+    if (isHelpCommand(value)) {
+      append({
+        kind: 'info',
+        text:
+          'mod8 commands:\n' +
+          '  /help                  — this list\n' +
+          '  /goal <text>           — set a persistent goal injected into every provider\n' +
+          '  /goal clear            — clear the current goal\n' +
+          '  /providers             — list configured providers + keys\n' +
+          '  /status                — current mode, turn count, last-turn tokens\n' +
+          '  /files                 — files written this session (with provider tags)\n' +
+          '  /cost                  — last-turn tokens + dashboard link\n' +
+          '  /preview [<script>]    — auto-launch the project\'s dev server + open the browser\n' +
+          '  /clear                 — wipe transcript + ledger + kill preview servers\n' +
+          '  /exit                  — leave\n' +
+          '\nrouting hints (just type them):\n' +
+          '  "use claude" / "use deepseek" / "back to host" / "compare all: <prompt>"',
+      });
+      return;
+    }
+
+    const goalArg = parseGoalCommand(value);
+    if (goalArg !== null) {
+      if (goalArg === GOAL_CLEAR_SENTINEL) {
+        const had = goalRef.current !== null;
+        goalRef.current = null;
+        append({
+          kind: 'info',
+          text: had ? 'goal cleared.' : 'no goal was set.',
+        });
+        return;
+      }
+      goalRef.current = goalArg;
+      append({
+        kind: 'info',
+        text:
+          `goal locked in: ${goalArg}\n` +
+          `  every provider will see this until you run /goal clear or /clear.`,
+      });
+      return;
+    }
+
+    if (isCostCommand(value)) {
+      const last = lastUsage
+        ? `  last turn: ${lastUsage.inputTokens.toLocaleString()} input tokens · ${lastUsage.model} · ${lastUsage.mode} mode`
+        : '  no turns yet — run a prompt and try again.';
+      append({
+        kind: 'info',
+        text:
+          'mod8 cost (this turn):\n' +
+          last +
+          '\n  cumulative session spend lives on the dashboard: https://mod8.ai/usage',
+      });
+      return;
+    }
+
+    const previewArg = parsePreviewCommand(value);
+    if (previewArg !== null) {
+      const scriptOverride =
+        previewArg === PREVIEW_AUTO_SENTINEL ? null : previewArg;
+      append({
+        kind: 'info',
+        text:
+          scriptOverride
+            ? `/preview: launching \`npm run ${scriptOverride}\`…`
+            : '/preview: detecting dev script…',
+      });
+      const result = await runPreview({
+        cwd: process.cwd(),
+        scriptOverride,
+      });
+      append({ kind: 'info', text: result.message });
       return;
     }
 
@@ -1674,6 +1762,14 @@ function App({
     const ledgerSummary = ledgerRef.current.summary();
     if (ledgerSummary) {
       system = `${system}\n\n# Session write ledger\n\n${ledgerSummary}`;
+    }
+
+    // /goal — single source of truth for "what is the user trying to do"
+    // that persists across turns and across provider switches.  Injected
+    // identically into host and work systems so the goal survives a
+    // back-and-forth.  Cleared by /goal clear or /clear.
+    if (goalRef.current) {
+      system = `${system}\n\n# User's current goal\n\n${goalRef.current}\n\nKeep every response aimed at this goal. If the user asks something orthogonal, answer it but note how it fits (or doesn't) into the goal above.`;
     }
 
     // Track whether the agent path appended the final assistant item itself
