@@ -18,6 +18,8 @@ import { execFile, spawn } from 'node:child_process';
 import * as diffLib from 'diff';
 import { WriteLedger, formatAgo } from './writeLedger.js';
 import { openInBrowser } from '../util/browser.js';
+import { htmlToMarkdown } from '../util/htmlToMarkdown.js';
+import { formatImageBytes, type PastedImage } from '../util/imagePaste.js';
 
 export interface InkToolContext {
   cwd: string;
@@ -35,12 +37,27 @@ export interface InkToolContext {
    *  the ledger so a duplicate-write warning can name which provider
    *  did the previous write. */
   providerName?: string;
+  /** Queue an image so it rides the NEXT user message as a multimodal
+   *  content part — same pipeline as a pasted screenshot.  Used by
+   *  `web_fetch` when called with `attach: 'next-turn'`, and as the
+   *  fallback path for models/providers that drop image content from
+   *  tool results.  See `chat.tsx`'s `pendingImageRef`. */
+  enqueueImage?: (image: PastedImage) => void;
 }
 
 export type ToolPreview =
   | { kind: 'write_file'; path: string; existed: boolean; bytes: number; diff?: string }
   | { kind: 'edit_file'; path: string; diff: string }
   | { kind: 'bash'; command: string };
+
+/** Discriminated return type for `web_fetch`'s execute — `toModelOutput`
+ *  maps it into the AI SDK's `ToolResultOutput` shape (text or
+ *  multimodal content parts). */
+type WebFetchOutput =
+  | { kind: 'text'; text: string }
+  | { kind: 'error'; message: string }
+  | { kind: 'image-inline'; url: string; mediaType: string; bytes: number; base64: string }
+  | { kind: 'image-queued'; url: string; mediaType: string; bytes: number };
 
 function resolvePath(ctx: InkToolContext, path: string): string {
   return isAbsolute(path) ? path : resolve(ctx.cwd, path);
@@ -102,6 +119,8 @@ export function buildHostInkTools(ctx: InkToolContext) {
     // "open the browser" requests with "I'm read-only", which is wrong:
     // opening a URL doesn't write anything in the user's project.
     open_url: work.open_url,
+    // web_fetch is read-only (just makes an HTTP GET).  Safe for host.
+    web_fetch: work.web_fetch,
   };
 }
 
@@ -227,6 +246,142 @@ export function buildInkTools(ctx: InkToolContext) {
       execute: async ({ url }) => {
         const r = await openInBrowser(url);
         return r.msg;
+      },
+    }),
+
+    web_fetch: tool({
+      description:
+        "Fetch a URL and return its contents so YOU (the model) can read it. Use this to read documentation, blog posts, API responses, raw files, or images on the public web. For HTML pages, mod8 strips to markdown. For images (png/jpg/gif/webp), the bytes are attached so vision-capable models actually SEE the image. http/https only; 10s timeout; response capped at ~5 MB.",
+      inputSchema: z.object({
+        url: z
+          .string()
+          .url()
+          .describe('Absolute URL (http:// or https://)'),
+        attach: z
+          .enum(['inline', 'next-turn'])
+          .default('inline')
+          .describe(
+            "How to deliver images to the model.  'inline' (default): image rides in the tool result so you see it in the SAME turn — works on Anthropic/OpenAI/Gemini vision models.  'next-turn': queue the image to attach to the user's NEXT message — fallback for providers that drop image bytes from tool results."
+          ),
+      }),
+      execute: async ({ url, attach }): Promise<WebFetchOutput> => {
+        if (!/^https?:\/\//i.test(url)) {
+          return { kind: 'error', message: `Error: web_fetch only supports http/https (got ${url}).` };
+        }
+        let resp: Response;
+        try {
+          resp = await fetch(url, {
+            redirect: 'follow',
+            signal: AbortSignal.timeout(10_000),
+            headers: { 'User-Agent': 'mod8-cli/web_fetch' },
+          });
+        } catch (err) {
+          return {
+            kind: 'error',
+            message: `Error: web_fetch failed for ${url} — ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
+        if (!resp.ok) {
+          return { kind: 'error', message: `Error: web_fetch got HTTP ${resp.status} from ${url}.` };
+        }
+
+        const contentType = (resp.headers.get('content-type') ?? '').toLowerCase();
+        const MAX_BYTES = 5 * 1024 * 1024;
+
+        if (contentType.startsWith('image/')) {
+          const buf = Buffer.from(await resp.arrayBuffer());
+          if (buf.length > MAX_BYTES) {
+            return { kind: 'error', message: `Error: image at ${url} is ${formatImageBytes(buf.length)}, larger than the 5 MB cap.` };
+          }
+          const mediaType = contentType.split(';')[0]!.trim();
+          const base64 = buf.toString('base64');
+          if (attach === 'next-turn') {
+            if (!ctx.enqueueImage) {
+              return { kind: 'error', message: `Error: attach='next-turn' isn't supported in this session — fall back to attach='inline'.` };
+            }
+            ctx.enqueueImage({
+              path: url,
+              base64,
+              mediaType,
+              bytes: buf.length,
+              name: url.split('/').pop() || 'image',
+            });
+            return {
+              kind: 'image-queued',
+              url,
+              mediaType,
+              bytes: buf.length,
+            };
+          }
+          return {
+            kind: 'image-inline',
+            url,
+            mediaType,
+            bytes: buf.length,
+            base64,
+          };
+        }
+
+        // Text path: read up to MAX_BYTES, then convert HTML to markdown if needed.
+        const reader = resp.body?.getReader();
+        if (!reader) {
+          return { kind: 'error', message: `Error: ${url} returned no body.` };
+        }
+        let received = 0;
+        const chunks: Uint8Array[] = [];
+        let truncated = false;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.byteLength;
+          if (received > MAX_BYTES) {
+            truncated = true;
+            try { await reader.cancel(); } catch { /* already done */ }
+            break;
+          }
+          chunks.push(value);
+        }
+        const body = Buffer.concat(chunks).toString('utf8');
+        const isHtml =
+          contentType.includes('text/html') ||
+          contentType.includes('application/xhtml') ||
+          /^\s*<(?:!doctype|html|head|body)\b/i.test(body);
+        const text = isHtml ? htmlToMarkdown(body) : body;
+        const TEXT_CAP = 50_000;
+        const capped = text.length > TEXT_CAP
+          ? `${text.slice(0, TEXT_CAP)}\n\n... (truncated at ${TEXT_CAP} chars of ${text.length})`
+          : text;
+        const note = truncated ? `(response truncated at ${formatImageBytes(MAX_BYTES)})\n` : '';
+        return { kind: 'text', text: `${note}${capped}` };
+      },
+      toModelOutput: ({ output }) => {
+        if (output.kind === 'error') {
+          return { type: 'error-text', value: output.message };
+        }
+        if (output.kind === 'text') {
+          return { type: 'text', value: output.text };
+        }
+        if (output.kind === 'image-queued') {
+          return {
+            type: 'text',
+            value: `Queued image from ${output.url} (${formatImageBytes(output.bytes)}, ${output.mediaType}). It will be attached to the user's next message — ask the user to send one to view it.`,
+          };
+        }
+        // image-inline
+        return {
+          type: 'content',
+          value: [
+            {
+              type: 'text',
+              text: `Image from ${output.url} (${formatImageBytes(output.bytes)}, ${output.mediaType}):`,
+            },
+            {
+              type: 'image-data',
+              data: output.base64,
+              mediaType: output.mediaType,
+            },
+          ],
+        };
       },
     }),
 

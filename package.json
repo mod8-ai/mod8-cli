@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
+    "test": "node test/sessions.test.mjs && node test/session-flow.test.mjs",
     "verify": "node ./bin/mod8.js verify",
     "prepublishOnly": "npm run build"
   },
@@ -62,6 +63,7 @@
     "@ai-sdk/openai-compatible": "^2.0.47",
     "@anthropic-ai/sdk": "^0.94.0",
     "@google/generative-ai": "^0.24.1",
+    "@types/proper-lockfile": "^4.1.4",
     "ai": "^6.0.177",
     "chalk": "^5.6.2",
     "commander": "^14.0.3",
@@ -70,6 +72,7 @@
     "ink-text-input": "^6.0.0",
     "js-yaml": "^4.1.1",
     "openai": "^6.36.0",
+    "proper-lockfile": "^4.1.2",
     "react": "^19.2.5",
     "zod": "^4.4.3"
   },

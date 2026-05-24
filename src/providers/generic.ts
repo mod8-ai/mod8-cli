@@ -44,9 +44,11 @@ export async function buildProviderClient(id: string): Promise<ProviderClient> {
     const tpl = templateById(id);
     const label = tpl?.name ?? id;
     throw new Error(
-      `No ${label} key configured. Run: mod8 keys set ${id}` +
-        (tpl ? '' : `, or mod8 add-provider for custom ones`) +
-        '.'
+      `No ${label} key configured.\n` +
+      `  · mod8 login              (recommended — one paste connects all four built-in providers)\n` +
+      `  · mod8 keys set ${id}` +
+      (tpl ? '' : `\n  · mod8 add-provider       (for custom OpenAI-compatible endpoints)`) +
+      '.'
     );
   }
   return clientForEntry(id, entry);

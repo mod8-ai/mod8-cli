@@ -57,9 +57,11 @@ export async function* streamProviderChat(
     const tpl = templateById(opts.providerId);
     const label = tpl?.name ?? opts.providerId;
     throw new Error(
-      `No ${label} key configured. Run: mod8 keys set ${opts.providerId}` +
-        (tpl ? '' : `, or mod8 add-provider for custom ones`) +
-        '.'
+      `No ${label} key configured.\n` +
+      `  · mod8 login              (recommended — one paste connects all four built-in providers)\n` +
+      `  · mod8 keys set ${opts.providerId}` +
+      (tpl ? '' : `\n  · mod8 add-provider       (for custom OpenAI-compatible endpoints)`) +
+      '.'
     );
   }
   const resolved = resolveModel(opts.providerId, opts.model, entry.defaultModel);
@@ -226,12 +228,13 @@ async function* streamProxyChat(
   let inputTokens = 0;
   let outputTokens = 0;
   let chargedMicros = 0;
+  let balanceAfterMicros: number | undefined;
   let sawDone = false;
 
   const consumeChunk = (chunk: string): Error | null => {
     for (const line of chunk.split('\n')) {
       if (!line.startsWith('data: ')) continue;
-      let ev: { type: string; delta?: string; error?: string; tokensIn?: number; tokensOut?: number; chargedMicros?: number };
+      let ev: { type: string; delta?: string; error?: string; tokensIn?: number; tokensOut?: number; chargedMicros?: number; balanceAfterMicros?: number };
       try {
         ev = JSON.parse(line.slice(6));
       } catch {
@@ -244,6 +247,9 @@ async function* streamProxyChat(
         inputTokens = ev.tokensIn ?? 0;
         outputTokens = ev.tokensOut ?? 0;
         chargedMicros = ev.chargedMicros ?? 0;
+        if (typeof ev.balanceAfterMicros === 'number') {
+          balanceAfterMicros = ev.balanceAfterMicros;
+        }
         sawDone = true;
       } else if (ev.type === 'error') {
         return new Error(`mod8 proxy: ${ev.error}`);
@@ -291,6 +297,7 @@ async function* streamProxyChat(
       latencyMs: Date.now() - start,
       model,
       costUsd: chargedMicros / 1_000_000,
+      ...(balanceAfterMicros !== undefined ? { balanceAfterMicros } : {}),
     },
   };
 }

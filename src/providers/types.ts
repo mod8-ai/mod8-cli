@@ -21,6 +21,10 @@ export interface StreamUsage {
   latencyMs: number;
   model: string;
   costUsd: number;
+  /** Remaining proxy credit, in micros ($1.00 = 1_000_000).  Populated
+   *  only when the turn went through the mod8 proxy (auth'd users); the
+   *  REPL uses this to fire a one-time low-balance nudge per session. */
+  balanceAfterMicros?: number;
 }
 
 export type StreamEvent =

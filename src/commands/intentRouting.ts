@@ -545,6 +545,51 @@ export function isHelpCommand(input: string): boolean {
   return /^\s*\/(help|\?|commands)\s*$/i.test(input);
 }
 
+/** True when the input is exactly the `/why` command (no args).  Prints
+ *  the last N routing decisions with reasons — the user-facing proof
+ *  that mod8's "smart routing" is actually doing something. */
+export function isWhyCommand(input: string): boolean {
+  return /^\s*\/why\s*$/i.test(input);
+}
+
+/** True when the input is exactly `/diagnose` — prints node/mod8
+ *  versions, OS, auth status, last 5 crashes, redacted config.  Used
+ *  for remote support without making the user share keys. */
+export function isDiagnoseCommand(input: string): boolean {
+  return /^\s*\/diagnose\s*$/i.test(input);
+}
+
+/** True when the input is exactly `/balance` — shows the user's mod8
+ *  proxy credit balance without quitting the REPL. */
+export function isBalanceCommand(input: string): boolean {
+  return /^\s*\/balance\s*$/i.test(input);
+}
+
+/** Parse `/topup` with an optional dollar amount:
+ *   /topup       → null (caller picks default amount)
+ *   /topup 25    → 25
+ *   /topup $50   → 50
+ * Returns the amount (number), the sentinel 0 for the bare form (caller
+ * uses the default), or `null` when this isn't a /topup command at all. */
+export function parseTopupCommand(input: string): number | null {
+  const m = input.match(/^\s*\/topup(?:\s+\$?(\d{1,4}))?\s*$/i);
+  if (!m) return null;
+  return m[1] ? Number(m[1]) : 0;
+}
+
+/** True when the input is exactly `/approvals` — opens the inline
+ *  approval panel for the mod8 self-improvement loop. */
+export function isApprovalsCommand(input: string): boolean {
+  return /^\s*\/approvals\s*$/i.test(input);
+}
+
+/** True when the input is exactly `/halt` — activates the loop kill
+ *  switch (writes the STOP file so any in-flight or scheduled tick
+ *  becomes a no-op). */
+export function isHaltCommand(input: string): boolean {
+  return /^\s*\/halt\s*$/i.test(input);
+}
+
 /** Parse `/preview` with an optional script-name override:
  *   /preview          → auto-detect (npm run dev / start / serve)
  *   /preview dev      → run `npm run dev`

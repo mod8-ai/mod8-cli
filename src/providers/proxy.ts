@@ -121,6 +121,7 @@ export function makeProxyClient(opts: ProxyClientOptions): ProviderClient {
     let inputTokens = 0;
     let outputTokens = 0;
     let chargedMicros = 0;
+    let balanceAfterMicros: number | null = null;
     let actualModel = model;
     let sawDone = false;
 
@@ -146,6 +147,7 @@ export function makeProxyClient(opts: ProxyClientOptions): ProviderClient {
             inputTokens = ev.tokensIn;
             outputTokens = ev.tokensOut;
             chargedMicros = ev.chargedMicros;
+            balanceAfterMicros = ev.balanceAfterMicros;
             sawDone = true;
           } else if (ev.type === 'error') {
             throw new Error(`mod8 proxy: ${ev.error}`);
@@ -166,6 +168,7 @@ export function makeProxyClient(opts: ProxyClientOptions): ProviderClient {
         latencyMs: Date.now() - start,
         model: actualModel,
         costUsd: chargedMicros / 1_000_000,
+        ...(balanceAfterMicros !== null ? { balanceAfterMicros } : {}),
       },
     };
   }

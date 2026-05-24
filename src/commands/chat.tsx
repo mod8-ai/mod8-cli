@@ -87,9 +87,26 @@ import {
   GOAL_CLEAR_SENTINEL,
   isCostCommand,
   isHelpCommand,
+  isWhyCommand,
+  isDiagnoseCommand,
+  isBalanceCommand,
+  isApprovalsCommand,
+  isHaltCommand,
+  parseTopupCommand,
   parsePreviewCommand,
   PREVIEW_AUTO_SENTINEL,
 } from './intentRouting.js';
+import { appendDecision, readRecent, digest } from '../storage/routingLog.js';
+import { readRecentCrashes, CRASH_LOG_PATH } from '../storage/crashLog.js';
+import {
+  getBalance,
+  openTopupCheckout,
+  formatUsdMicros,
+  TOPUP_AMOUNTS_USD,
+  LOW_BALANCE_THRESHOLD_MICROS,
+  NotLoggedIn,
+  BillingNotConfigured,
+} from './billing.js';
 import { runPreview, killAllPreviewProcs } from './previewServer.js';
 import { findApiKey, sanitizeKeys, maskApiKey } from '../util/secrets.js';
 import { explainError } from '../providers/errorHints.js';
@@ -1418,12 +1435,139 @@ function App({
           '  /status                — current mode, turn count, last-turn tokens\n' +
           '  /files                 — files written this session (with provider tags)\n' +
           '  /cost                  — last-turn tokens + dashboard link\n' +
+          '  /balance               — proxy credit balance (requires mod8 login)\n' +
+          '  /topup [<amount>]      — buy mod8 credits via Stripe (default $50)\n' +
+          '  /why                   — recent routing decisions + why mod8 picked them\n' +
+          '  /diagnose              — versions, OS, auth status, last crashes (for support)\n' +
+          '  /approvals             — mod8 self-improvement loop: review pending changes\n' +
+          '  /halt                  — freeze the self-improvement loop (writes STOP file)\n' +
           '  /preview [<script>]    — auto-launch the project\'s dev server + open the browser\n' +
           '  /clear                 — wipe transcript + ledger + kill preview servers\n' +
           '  /exit                  — leave\n' +
           '\nrouting hints (just type them):\n' +
           '  "use claude" / "use deepseek" / "back to host" / "compare all: <prompt>"',
       });
+      return;
+    }
+
+    if (isWhyCommand(value)) {
+      const recent = await readRecent(10);
+      if (recent.length === 0) {
+        append({
+          kind: 'info',
+          text: "/why: no routing decisions logged yet — send a coding prompt in work mode and mod8 will recommend a provider.",
+        });
+        return;
+      }
+      const fmt = (d: typeof recent[number]) => {
+        const ago = Math.max(1, Math.floor((Date.now() - d.ts) / 1000));
+        const when = ago < 60 ? `${ago}s ago` : ago < 3600 ? `${Math.floor(ago/60)}m ago` : `${Math.floor(ago/3600)}h ago`;
+        const tag = d.personalized ? '★ your pick' : 'curated';
+        return `  ${when}  topic=${d.topic}  →  ${d.picked}  (${tag})\n    ${d.reason}`;
+      };
+      append({
+        kind: 'info',
+        text:
+          `mod8 routing — last ${recent.length} decision${recent.length === 1 ? '' : 's'}:\n` +
+          recent.map(fmt).join('\n'),
+      });
+      return;
+    }
+
+    if (isDiagnoseCommand(value)) {
+      const auth = await readAuth();
+      const crashes = await readRecentCrashes(5);
+      const pkgVer = '0.5.29';
+      const authLine = auth
+        ? `  auth: logged in${auth.email ? ` as ${auth.email}` : ''}`
+        : `  auth: not logged in (mod8 login)`;
+      const crashBlock = crashes.length === 0
+        ? '  crashes: none recorded ✓'
+        : `  crashes (last ${crashes.length}, full log: ${CRASH_LOG_PATH}):\n` +
+          crashes
+            .map((c) => {
+              const ago = Math.max(1, Math.floor((Date.now() - c.ts) / 1000));
+              const when = ago < 60 ? `${ago}s ago` : ago < 3600 ? `${Math.floor(ago/60)}m ago` : `${Math.floor(ago/3600)}h ago`;
+              return `    ${when}  ${c.kind}: ${c.message}`;
+            })
+            .join('\n');
+      append({
+        kind: 'info',
+        text:
+          'mod8 diagnose:\n' +
+          `  mod8: ${pkgVer}\n` +
+          `  node: ${process.version}\n` +
+          `  platform: ${process.platform} ${process.arch}\n` +
+          `  cwd: ${process.cwd()}\n` +
+          authLine + '\n' +
+          crashBlock,
+      });
+      return;
+    }
+
+    if (isBalanceCommand(value)) {
+      try {
+        const b = await getBalance();
+        append({
+          kind: 'info',
+          text:
+            `mod8 balance: ${formatUsdMicros(b.availableMicros)}` +
+            (b.email ? ` (${b.email})` : '') + '\n' +
+            `  top up:  /topup ${TOPUP_AMOUNTS_USD.join(' | ')}`,
+        });
+      } catch (err) {
+        append({ kind: 'error', text: billingErrorMessage(err) });
+      }
+      return;
+    }
+
+    if (isApprovalsCommand(value)) {
+      try {
+        const { approvalsCommand } = await import('../approval/command.js');
+        await approvalsCommand({ slug: 'mod8' });
+        append({ kind: 'info', text: 'closed approvals panel.' });
+      } catch (err) {
+        append({ kind: 'error', text: `/approvals failed: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      return;
+    }
+
+    if (isHaltCommand(value)) {
+      try {
+        const kill = await import('../loop/kill.js');
+        const path = await kill.activate();
+        append({
+          kind: 'info',
+          text: `loop halted — STOP file written at ${path}\n  every subsequent loop tick becomes a no-op until you remove it.\n  resume: rm ${path}`,
+        });
+      } catch (err) {
+        append({ kind: 'error', text: `/halt failed: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      return;
+    }
+
+    const topupAmount = parseTopupCommand(value);
+    if (topupAmount !== null) {
+      const amount = topupAmount > 0 ? topupAmount : 50;
+      if (amount < 5) {
+        append({
+          kind: 'error',
+          text: `/topup: min amount is $5 (got $${amount}). Try /topup 25 or /topup 50.`,
+        });
+        return;
+      }
+      try {
+        await openTopupCheckout(amount);
+        append({
+          kind: 'info',
+          text:
+            `Opened Stripe Checkout for $${amount}.\n` +
+            `  Complete the purchase in your browser — your balance updates on the next turn.\n` +
+            `  Check it: /balance`,
+        });
+      } catch (err) {
+        append({ kind: 'error', text: billingErrorMessage(err) });
+      }
       return;
     }
 
@@ -1658,6 +1802,15 @@ function App({
               text: renderComparison(comp, workIdRef.current),
             });
             sessionTopicRef.current.recommendedFor.add(topic);
+            void appendDecision({
+              ts: Date.now(),
+              topic,
+              picked: comp.recommendedProvider,
+              candidates: comp.rows.map((r) => r.provider),
+              reason: comp.rows[0]!.why,
+              promptDigest: digest(text),
+              personalized: comp.isPersonalized,
+            });
           }
         }
       }
@@ -1764,7 +1917,12 @@ function App({
       system = `${system}\n\n# Session write ledger\n\n${ledgerSummary}`;
     }
 
-    // /goal — single source of truth for "what is the user trying to do"
+    // One-shot per session: when a proxy turn returns a balance under
+  // LOW_BALANCE_THRESHOLD_MICROS, we append a single nudge line.  Latched
+  // ref so we don't pester the user every subsequent turn.  Cleared by
+  // /clear via clearSession (alongside the rest of the session state).
+  const lowBalanceNudgedRef = useRef<boolean>(false);
+  // /goal — single source of truth for "what is the user trying to do"
     // that persists across turns and across provider switches.  Injected
     // identically into host and work systems so the goal survives a
     // back-and-forth.  Cleared by /goal clear or /clear.
@@ -1809,12 +1967,16 @@ function App({
         // Host mode gets a READ-ONLY tool set so it can answer "list the
         // folder" / "what's in this file" without bouncing to claude.  Work
         // mode keeps the full kit (read + write + edit + bash + plan).
+        const enqueueImage = (img: PastedImage) => {
+          pendingImageRef.current = img;
+        };
         const tools = currentMode === 'host'
-          ? buildHostInkTools({ cwd: process.cwd() })
+          ? buildHostInkTools({ cwd: process.cwd(), enqueueImage })
           : buildInkTools({
               cwd: process.cwd(),
               ledger: ledgerRef.current,
               providerName: workSpeakerNow.name,
+              enqueueImage,
             });
 
         const flushText = () => {
@@ -2208,6 +2370,21 @@ function App({
         model: usage.model,
         mode: currentMode,
       });
+      // Low-balance nudge — fires at most once per session, only for
+      // proxy turns (BYOK turns don't carry a balance signal).
+      if (
+        typeof usage.balanceAfterMicros === 'number' &&
+        usage.balanceAfterMicros < LOW_BALANCE_THRESHOLD_MICROS &&
+        !lowBalanceNudgedRef.current
+      ) {
+        lowBalanceNudgedRef.current = true;
+        append({
+          kind: 'info',
+          text:
+            `low balance: ${formatUsdMicros(usage.balanceAfterMicros)} left.\n` +
+            `  top up:  /topup ${TOPUP_AMOUNTS_USD.join(' | ')}`,
+        });
+      }
     }
 
     // Drain the next queued message (if any).  We hop through setTimeout
@@ -2244,7 +2421,7 @@ function App({
     if (ids.length === 0) {
       append({
         kind: 'error',
-        text: 'no providers configured — run mod8 login (recommended), or mod8 keys set <id>.',
+        text: 'no providers configured.\n  Quit with /exit, then run:\n    mod8 login              (recommended — one paste connects all four providers)\n    mod8 keys set <id>      (BYOK — claude, openai, gemini, deepseek, …)\n  Back here when you have at least one provider and try again.',
       });
       return;
     }
@@ -2374,6 +2551,20 @@ function App({
   );
 }
 
+function billingErrorMessage(err: unknown): string {
+  if (err instanceof NotLoggedIn) {
+    return 'not logged in.\n  Quit with /exit, then run: mod8 login';
+  }
+  if (err instanceof BillingNotConfigured) {
+    return (
+      `billing isn't enabled on this proxy yet (${err.endpoint} returned 404/501).\n` +
+      `  The mod8-proxy deployment needs the Stripe endpoints — see docs/PROXY_BILLING_CONTRACT.md.\n` +
+      `  Meanwhile, BYOK still works: quit with /exit, then mod8 keys set <id>.`
+    );
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 async function listProvidersInChat(append: (item: AppendItem) => void): Promise<void> {
   const auth = await readAuth();
   const localIds = await configuredProviderIds();
@@ -2389,7 +2580,7 @@ async function listProvidersInChat(append: (item: AppendItem) => void): Promise<
   if (ids.length === 0) {
     append({
       kind: 'info',
-      text: 'no providers configured. run mod8 login (recommended), or mod8 keys set <id>.',
+      text: 'no providers configured.\n  Quit with /exit, then run:\n    mod8 login              (recommended)\n    mod8 keys set <id>      (BYOK)',
     });
     return;
   }

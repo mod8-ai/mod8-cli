@@ -1,5 +1,12 @@
 // Programmatic smoke test of the Ink chat UI. No API key needed.
 // Renders the App component to a virtual terminal and asserts on the output.
+//
+// CURRENTLY DISABLED IN CI: ink-testing-library@4.0.0 was built against
+// ink@^5; this repo runs ink@^7.  The peer mismatch makes ink internals
+// resolve to undefined and the App's render tree explodes with
+// "Element type is invalid".  To re-enable, bump ink-testing-library to
+// a version that supports ink 7 (>=5.x at the time of writing) and add
+// `node test/chat-smoke.mjs` back to the `test` script in package.json.
 
 import { render } from 'ink-testing-library';
 import React from 'react';

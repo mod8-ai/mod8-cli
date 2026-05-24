@@ -1,6 +1,9 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { installCrashHandlers } from './storage/crashLog.js';
 import { keysSet, keysList, keysRemove } from './commands/keys.js';
+
+installCrashHandlers();
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { readAuth } from './storage/auth.js';
@@ -8,6 +11,33 @@ import { runPrompt, resolveProvider } from './commands/prompt.js';
 import { runAll, ensureAllConsent } from './commands/all.js';
 import { configGet, configSet } from './commands/config.js';
 import { runChat } from './commands/chat.js';
+import { demoCommand } from './commands/demo.js';
+import {
+  getBalance,
+  openTopupCheckout,
+  formatUsdMicros,
+  TOPUP_AMOUNTS_USD,
+  NotLoggedIn,
+  BillingNotConfigured,
+} from './commands/billing.js';
+import {
+  loopTick,
+  loopStatus,
+  loopLogs,
+  loopAuditVerify,
+  loopStart,
+  loopStop,
+  loopHalt,
+  loopResume,
+} from './commands/loop.js';
+import { approvalsCommand } from './approval/command.js';
+import {
+  connectAddProduct,
+  connectList,
+  connectRemove,
+  connectAddAdapter,
+  pauseLoop,
+} from './commands/connect.js';
 import { listCommand } from './commands/list.js';
 import { verifyCommand } from './commands/verify.js';
 import { getMostRecentSession } from './storage/sessions.js';
@@ -188,6 +218,166 @@ program
     const { runContext } = await import('./commands/context.js');
     await runContext();
   });
+
+program
+  .command('demo')
+  .description('30-second pitch: same prompt across every configured model, side-by-side')
+  .action(async () => {
+    await demoCommand();
+  });
+
+const loop = program
+  .command('loop')
+  .description('Self-improvement loop — sense → ideate → build → approve → measure → learn');
+loop
+  .command('tick')
+  .description('Run one pass of the loop now (the cron-driven entry; Phase 1)')
+  .option('--slug <slug>', 'product slug (default: mod8)')
+  .option('--unsafe-no-lock', 'skip the advisory lock — debug only', false)
+  .action(async (opts: { slug?: string; unsafeNoLock?: boolean }) => {
+    await loopTick(opts);
+  });
+loop
+  .command('status')
+  .description('Current loop state — autonomy, last tick, per-phase status, recent events')
+  .option('--slug <slug>', 'product slug (default: mod8)')
+  .action(async (opts: { slug?: string }) => {
+    await loopStatus(opts);
+  });
+loop
+  .command('logs')
+  .description('Tail the loop event log (events.jsonl)')
+  .option('--slug <slug>', 'product slug (default: mod8)')
+  .option('--tail <n>', 'how many events to show (default 50, max 1000)')
+  .action(async (opts: { slug?: string; tail?: string }) => {
+    await loopLogs(opts);
+  });
+loop
+  .command('start')
+  .description('Start the loop daemon — same engine as `loop tick` but long-lived')
+  .option('--slug <slug>', 'product slug (default: mod8)')
+  .option('--foreground', 'run in foreground (don\'t detach)', false)
+  .option('--interval-minutes <n>', 'tick interval (default: policy.cadence.sense_every_minutes)', (v) => parseInt(v, 10))
+  .action(async (opts: { slug?: string; foreground?: boolean; intervalMinutes?: number }) => {
+    await loopStart(opts);
+  });
+loop
+  .command('stop')
+  .description('Stop the running daemon (SIGTERM)')
+  .action(async () => { await loopStop(); });
+loop
+  .command('halt')
+  .description('Activate the kill switch — every subsequent tick is a no-op')
+  .action(async () => { await loopHalt(); });
+loop
+  .command('resume')
+  .description('Clear the kill switch')
+  .action(async () => { await loopResume(); });
+loop
+  .command('pause')
+  .description('Pause the loop until <date> — effective autonomy drops to L1 until then')
+  .option('--slug <slug>', 'product slug (default: mod8)')
+  .requiredOption('--until <date>', 'ISO date (e.g. 2026-08-15)')
+  .action(async (opts: { slug?: string; until: string }) => {
+    await pauseLoop(opts.slug ?? 'mod8', opts.until);
+  });
+
+const connect = program
+  .command('connect')
+  .description('Connect a product (or external service adapter) to the mod8 self-improvement loop');
+connect
+  .command('add <slug>', { isDefault: true })
+  .description('Onboard a new product — scaffolds product.md + starter policy.yaml')
+  .action(async (slug: string) => { await connectAddProduct(slug); });
+connect
+  .command('list')
+  .description('List connected products')
+  .action(async () => { await connectList(); });
+connect
+  .command('remove <slug>')
+  .description('Remove a product (deletes its ~/.config/mod8/products/<slug>/ directory)')
+  .action(async (slug: string) => { await connectRemove(slug); });
+connect
+  .command('add-adapter <slug> <adapter>')
+  .description('Store adapter credentials interactively (github, vercel, plausible, posthog, ga4, stripe, slack, discord, …)')
+  .action(async (slug: string, adapter: string) => { await connectAddAdapter(slug, adapter); });
+loop
+  .command('audit')
+  .description('Audit-log helpers (verify hash chain)')
+  .argument('<action>', 'one of: verify')
+  .option('--slug <slug>', 'product slug (default: mod8)')
+  .action(async (action: string, opts: { slug?: string }) => {
+    if (action !== 'verify') {
+      process.stderr.write(`mod8 loop audit: unknown action "${action}" (only "verify" is supported in Phase 1)\n`);
+      process.exit(1);
+    }
+    await loopAuditVerify(opts);
+  });
+
+program
+  .command('approvals')
+  .description('Review pending loop approvals (full-screen Ink panel — same as /approvals in chat)')
+  .option('--slug <slug>', 'product slug (default: mod8)')
+  .option('--kind <kind>', 'filter by kind (code|doc|website-copy|marketing|user-reply|experiment|paid-campaign|roadmap)')
+  .action(async (opts: { slug?: string; kind?: string }) => {
+    await approvalsCommand(opts);
+  });
+
+program
+  .command('balance')
+  .description('Show your mod8 proxy credit balance (requires `mod8 login`)')
+  .action(async () => {
+    try {
+      const b = await getBalance();
+      const who = b.email ? chalk.dim(` (${b.email})`) : '';
+      process.stdout.write(
+        chalk.bold(`mod8 balance: ${formatUsdMicros(b.availableMicros)}`) + who + '\n' +
+        chalk.dim(`Top up:  mod8 topup ${TOPUP_AMOUNTS_USD.join('|')}\n`)
+      );
+    } catch (err) {
+      handleBillingError(err);
+    }
+  });
+
+program
+  .command('topup [amount]')
+  .description(`Buy mod8 credits via Stripe (amounts: ${TOPUP_AMOUNTS_USD.map((a) => `$${a}`).join(', ')})`)
+  .action(async (amountArg: string | undefined) => {
+    try {
+      const amount = amountArg ? Number(amountArg.replace(/^\$/, '')) : 50;
+      if (!Number.isFinite(amount) || amount < 5) {
+        process.stderr.write(
+          chalk.red(`mod8 topup: invalid amount "${amountArg}". `) +
+          `Pick one of $${TOPUP_AMOUNTS_USD.join(', $')} (min $5).\n`
+        );
+        process.exit(1);
+      }
+      await openTopupCheckout(amount);
+    } catch (err) {
+      handleBillingError(err);
+    }
+  });
+
+function handleBillingError(err: unknown): never {
+  if (err instanceof NotLoggedIn) {
+    process.stderr.write(
+      chalk.yellow('mod8: not logged in. Run ') + chalk.bold('mod8 login') +
+      chalk.yellow(' first.\n')
+    );
+    process.exit(1);
+  }
+  if (err instanceof BillingNotConfigured) {
+    process.stderr.write(
+      chalk.yellow(`mod8: billing isn't enabled on this proxy yet (${err.endpoint} returned 404/501).\n`) +
+      chalk.dim(`The mod8-proxy deployment needs to be upgraded to a build that includes Stripe.\n`) +
+      chalk.dim(`If you're the operator, see docs/PROXY_BILLING_CONTRACT.md in the mod8-cli repo.\n`)
+    );
+    process.exit(1);
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  process.stderr.write(chalk.red('mod8: ') + msg + '\n');
+  process.exit(1);
+}
 
 // Static-site hosting: package the current project's build output and
 // ship it to a free <slug>.apps.mod8.ai subdomain.  Dry-run by default
@@ -500,8 +690,22 @@ async function printStartupBanner(): Promise<void> {
   if (auth) {
     const who = auth.email ? chalk.bold(auth.email) : 'mod8 account';
     process.stderr.write(chalk.dim(`Logged in as ${who} — proxy mode (mod8 logout to switch off)\n`));
+    return;
+  }
+  const { configuredProviderIds } = await import('./storage/providers.js');
+  const local = await configuredProviderIds();
+  if (local.length === 0) {
+    // Fresh install — say so explicitly and point at the two ways to
+    // add credentials.  This used to claim "Local mode — using
+    // providers.json" even when no providers.json existed, leaving
+    // first-run users staring at an empty REPL with no clue what to do.
+    process.stderr.write(
+      chalk.yellow(`No providers configured yet. To get started:\n`) +
+      chalk.dim(`  · ${chalk.bold('mod8 login')}            (recommended — hosted proxy, all four providers)\n`) +
+      chalk.dim(`  · ${chalk.bold('mod8 keys set <id>')}    (BYOK — claude, openai, gemini, deepseek, …)\n`)
+    );
   } else {
-    process.stderr.write(chalk.dim(`Local mode — using providers.json (mod8 login to use the hosted proxy)\n`));
+    process.stderr.write(chalk.dim(`Local mode — ${local.length} provider${local.length === 1 ? '' : 's'} configured (mod8 login to use the hosted proxy)\n`));
   }
 }
 
