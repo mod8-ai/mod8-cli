@@ -912,6 +912,10 @@ function App({
   // prompts so every provider stays on-task across turns. Cleared by
   // /clear or `/goal clear`.
   const goalRef = useRef<string | null>(null);
+  // One-shot per session: when a proxy turn returns a balance under
+  // LOW_BALANCE_THRESHOLD_MICROS, we append a single nudge line.  Latched
+  // ref so we don't pester the user every subsequent turn.
+  const lowBalanceNudgedRef = useRef<boolean>(false);
 
   // Resolve a provider entry, falling back to a proxy-synthesized entry when
   // the user is logged in via `mod8 login` and asking for one of the four
@@ -1917,12 +1921,7 @@ function App({
       system = `${system}\n\n# Session write ledger\n\n${ledgerSummary}`;
     }
 
-    // One-shot per session: when a proxy turn returns a balance under
-  // LOW_BALANCE_THRESHOLD_MICROS, we append a single nudge line.  Latched
-  // ref so we don't pester the user every subsequent turn.  Cleared by
-  // /clear via clearSession (alongside the rest of the session state).
-  const lowBalanceNudgedRef = useRef<boolean>(false);
-  // /goal — single source of truth for "what is the user trying to do"
+    // /goal — single source of truth for "what is the user trying to do"
     // that persists across turns and across provider switches.  Injected
     // identically into host and work systems so the goal survives a
     // back-and-forth.  Cleared by /goal clear or /clear.
