@@ -58,8 +58,8 @@ export async function* streamProviderChat(
     const label = tpl?.name ?? opts.providerId;
     throw new Error(
       `No ${label} key configured.\n` +
-      `  · mod8 login              (recommended — one paste connects all four built-in providers)\n` +
-      `  · mod8 keys set ${opts.providerId}` +
+      `  · mod8 keys set ${opts.providerId}              (recommended — bring your own key)\n` +
+      `  · mod8 login              (optional — connects your mod8 dashboard)` +
       (tpl ? '' : `\n  · mod8 add-provider       (for custom OpenAI-compatible endpoints)`) +
       '.'
     );

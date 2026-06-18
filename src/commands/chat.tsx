@@ -1062,7 +1062,7 @@ function App({
     if (!entry) {
       append({
         kind: 'error',
-        text: `${resolvedId} not configured. Run: mod8 login (recommended), or mod8 keys set ${resolvedId}.`,
+        text: `${resolvedId} not configured. Run: mod8 keys set ${resolvedId} (your own key), or mod8 login to connect your dashboard.`,
       });
       return false;
     }
@@ -2420,7 +2420,7 @@ function App({
     if (ids.length === 0) {
       append({
         kind: 'error',
-        text: 'no providers configured.\n  Quit with /exit, then run:\n    mod8 login              (recommended — one paste connects all four providers)\n    mod8 keys set <id>      (BYOK — claude, openai, gemini, deepseek, …)\n  Back here when you have at least one provider and try again.',
+        text: 'no providers configured.\n  Quit with /exit, then run:\n    mod8 keys set <id>      (recommended — bring your own key: claude, openai, gemini, deepseek, …)\n    mod8 login              (optional — connects your mod8 dashboard)\n  Back here when you have at least one provider and try again.',
       });
       return;
     }

@@ -701,11 +701,11 @@ async function printStartupBanner(): Promise<void> {
     // first-run users staring at an empty REPL with no clue what to do.
     process.stderr.write(
       chalk.yellow(`No providers configured yet. To get started:\n`) +
-      chalk.dim(`  · ${chalk.bold('mod8 login')}            (recommended — hosted proxy, all four providers)\n`) +
-      chalk.dim(`  · ${chalk.bold('mod8 keys set <id>')}    (BYOK — claude, openai, gemini, deepseek, …)\n`)
+      chalk.dim(`  · ${chalk.bold('mod8 keys set <id>')}    (recommended — bring your own key: claude, openai, gemini, deepseek, …)\n`) +
+      chalk.dim(`  · ${chalk.bold('mod8 login')}            (optional — connects your mod8 dashboard & account)\n`)
     );
   } else {
-    process.stderr.write(chalk.dim(`Local mode — ${local.length} provider${local.length === 1 ? '' : 's'} configured (mod8 login to use the hosted proxy)\n`));
+    process.stderr.write(chalk.dim(`Ready — ${local.length} provider${local.length === 1 ? '' : 's'} configured with your own key${local.length === 1 ? '' : 's'} (mod8 login to connect your dashboard)\n`));
   }
 }
 

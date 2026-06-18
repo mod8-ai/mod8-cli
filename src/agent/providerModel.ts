@@ -136,7 +136,7 @@ async function buildLocalConnection(resolved: ResolvedModel): Promise<ProviderCo
   const entry = await resolveConfigured(resolved.kind);
   if (!entry) {
     throw new Error(
-      `${resolved.kind}: no local key configured and you're not logged in.  Run \`mod8 login\` (recommended) or \`mod8 keys set ${resolved.kind}\`.`
+      `${resolved.kind}: no key configured.  Run \`mod8 keys set ${resolved.kind}\` (recommended — your own key) or \`mod8 login\` to connect your dashboard.`
     );
   }
   switch (resolved.kind) {
