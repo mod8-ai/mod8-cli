@@ -37,19 +37,11 @@ npm install -g mod8-cli
 
 Requires Node 20+. The terminal command is `mod8`; the npm package is `mod8-cli`.
 
-Then pick auth:
+Then add a provider. No signup required.
 
-### Option A — `mod8 login` (hosted proxy)
+### Recommended — bring your own keys
 
-One account, one bill, every provider.
-
-```bash
-mod8 login                  # opens mod8.ai, paste the sk-mod8-… key
-```
-
-After login, every request goes through the mod8 proxy. You see live spend on the [mod8.ai dashboard](https://mod8.ai).
-
-### Option B — BYOK (bring your own keys)
+Paste a key from any provider you already have. mod8 talks **directly** to that provider — your key never touches a mod8 server, and there's nothing to pay us.
 
 ```bash
 mod8 keys set anthropic     # also: openai, google, deepseek, mistral,
@@ -57,7 +49,17 @@ mod8 keys set anthropic     # also: openai, google, deepseek, mistral,
 mod8 add-provider           # for any other OpenAI-compatible API
 ```
 
-Keys are stored at `~/.config/mod8/providers.json` (mode `0600`, never leaves your machine).
+Keys are stored at `~/.config/mod8/providers.json` (mode `0600`, never leaves your machine). That's it — start chatting with `mod8 new`.
+
+### Optional — `mod8 login` (connect your dashboard)
+
+Want the [mod8.ai dashboard](https://mod8.ai) — per-project spend, provider mix, published sites?
+
+```bash
+mod8 login                  # opens mod8.ai, links this CLI to your account
+```
+
+Login is purely for your account + dashboard. You still bring your own keys.
 
 ---
 
@@ -130,7 +132,7 @@ mod8 publish --domain site.com  # also bind a custom domain
 
 mod8 keys list              # who's configured
 mod8 add-provider           # add any OpenAI-compatible API
-mod8 verify                 # run 252 self-tests
+mod8 verify                 # run 300+ self-tests
 ```
 
 Inside chat, you can also:
@@ -178,7 +180,7 @@ If you `mod8 login`, every session is tracked per-project. Visit the dashboard t
 
 **Hosted mode (Option A — `mod8 login`):** Requests go through the mod8 proxy at mod8.ai. The proxy forwards to providers using mod8's master keys, deducts from your balance, and records the turn for the dashboard. mod8 does NOT store your prompts or responses — only metadata: project name, topic, token counts, cost.
 
-The source is short enough to audit in an evening. `mod8 verify` runs 252 sandboxed tests covering every user-facing flow.
+The source is short enough to audit in an evening. `mod8 verify` runs 300+ sandboxed tests covering every user-facing flow.
 
 ---
 

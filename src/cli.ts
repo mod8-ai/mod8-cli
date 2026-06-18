@@ -53,6 +53,14 @@ import { devSimulate } from './commands/devSimulate.js';
 import { devHostSystem } from './commands/devHostSystem.js';
 import { readStdin } from './input/stdin.js';
 import { composePrompt } from './input/compose.js';
+import { createRequire } from 'node:module';
+
+// Single source of truth for the version: package.json at the package root
+// (../package.json relative to both src/cli.ts in dev and dist/cli.js when
+// built).  Reading it at runtime keeps `mod8 --version` from ever drifting
+// from the published package version again.
+const require = createRequire(import.meta.url);
+const { version: PKG_VERSION } = require('../package.json') as { version: string };
 
 const program = new Command();
 
@@ -61,7 +69,7 @@ program
   .description(
     'Talk to any LLM from your terminal — Claude, GPT, Gemini, DeepSeek, Mistral, Groq, anything OpenAI-compatible. BYOK.'
   )
-  .version('0.5.29');
+  .version(PKG_VERSION);
 
 program
   .argument('[prompt]', 'prompt to send (uses default provider unless a flag is set)')

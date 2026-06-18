@@ -8,15 +8,20 @@ description: |
   source path), then `npm install` the resulting tarball into the per-test
   sandbox.  Each test gets a fresh node_modules, so installs are repeatable.
 
+  The tarball name carries the package version (mod8-cli-<version>.tgz), so
+  every reference resolves it dynamically from package.json — bumping the
+  version never breaks this suite.
+
 tests:
   - name: pack produces a tarball with the expected files
     setup:
       - shell: |
           cd /Users/yonatanzlit/mod8
-          rm -f mod8-cli-0.5.29.tgz
+          VER=$(node -p "require('./package.json').version")
+          rm -f mod8-cli-$VER.tgz
           npm pack > /tmp/mod8-pack.log 2>&1
-          test -f mod8-cli-0.5.29.tgz || { cat /tmp/mod8-pack.log; exit 1; }
-    shell: tar tzf /Users/yonatanzlit/mod8/mod8-cli-0.5.29.tgz
+          test -f mod8-cli-$VER.tgz || { cat /tmp/mod8-pack.log; exit 1; }
+    shell: 'cd /Users/yonatanzlit/mod8 && tar tzf mod8-cli-$(node -p "require(''./package.json'').version").tgz'
     expect:
       stdout_contains:
         - "package/bin/mod8.js"
@@ -31,7 +36,7 @@ tests:
       exit_code: 0
 
   - name: tarball does not include source TypeScript
-    shell: tar tzf /Users/yonatanzlit/mod8/mod8-cli-0.5.29.tgz
+    shell: 'cd /Users/yonatanzlit/mod8 && tar tzf mod8-cli-$(node -p "require(''./package.json'').version").tgz'
     expect:
       stdout_omits:
         - "package/src/"
@@ -44,18 +49,20 @@ tests:
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.29.tgz > /tmp/mod8-install.log 2>&1
+          VER=$(node -p "require('/Users/yonatanzlit/mod8/package.json').version")
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-$VER.tgz > /tmp/mod8-install.log 2>&1
           test -x ./node_modules/.bin/mod8 || { echo "missing or non-exec bin"; cat /tmp/mod8-install.log; exit 1; }
-    shell: $MOD8_CONFIG_DIR/node_modules/.bin/mod8 --version
+    shell: 'test "$($MOD8_CONFIG_DIR/node_modules/.bin/mod8 --version)" = "$(node -p "require(''/Users/yonatanzlit/mod8/package.json'').version")" && echo VERSION_MATCHES'
     expect:
-      stdout_contains: "0.5.29"
+      stdout_contains: "VERSION_MATCHES"
       exit_code: 0
 
   - name: installed binary --help lists the new commands
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.29.tgz > /tmp/mod8-install.log 2>&1
+          VER=$(node -p "require('/Users/yonatanzlit/mod8/package.json').version")
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-$VER.tgz > /tmp/mod8-install.log 2>&1
     shell: $MOD8_CONFIG_DIR/node_modules/.bin/mod8 --help
     expect:
       stdout_contains:
@@ -73,7 +80,8 @@ tests:
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.29.tgz > /tmp/mod8-install.log 2>&1
+          VER=$(node -p "require('/Users/yonatanzlit/mod8/package.json').version")
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-$VER.tgz > /tmp/mod8-install.log 2>&1
     shell: $MOD8_CONFIG_DIR/node_modules/.bin/mod8 keys list
     expect:
       stdout_contains:
@@ -91,7 +99,8 @@ tests:
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.29.tgz > /tmp/mod8-install.log 2>&1
+          VER=$(node -p "require('/Users/yonatanzlit/mod8/package.json').version")
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-$VER.tgz > /tmp/mod8-install.log 2>&1
     shell: "MOD8_MOCK=1 MOD8_AUTO_CONFIRM=1 $MOD8_CONFIG_DIR/node_modules/.bin/mod8 --all 'say hi'"
     expect:
       stdout_contains:
@@ -104,7 +113,8 @@ tests:
     setup:
       - shell: |
           cd $MOD8_CONFIG_DIR
-          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-0.5.29.tgz > /tmp/mod8-install.log 2>&1
+          VER=$(node -p "require('/Users/yonatanzlit/mod8/package.json').version")
+          npm install --no-audit --no-fund /Users/yonatanzlit/mod8/mod8-cli-$VER.tgz > /tmp/mod8-install.log 2>&1
       - shell: "echo 'sk-test-fresh-install' | $MOD8_CONFIG_DIR/node_modules/.bin/mod8 keys set anthropic"
     shell: "true"
     expect:
