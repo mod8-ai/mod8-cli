@@ -51,6 +51,7 @@ import { devRoutingPrefs } from './commands/devRoutingPrefs.js';
 import { devWorkAsk } from './commands/devWorkAsk.js';
 import { devSimulate } from './commands/devSimulate.js';
 import { devHostSystem } from './commands/devHostSystem.js';
+import { driveCommand } from './commands/drive.js';
 import { readStdin } from './input/stdin.js';
 import { composePrompt } from './input/compose.js';
 import { createRequire } from 'node:module';
@@ -232,6 +233,15 @@ program
   .description('30-second pitch: same prompt across every configured model, side-by-side')
   .action(async () => {
     await demoCommand();
+  });
+
+program
+  .command('drive <script>')
+  .description('Run a scripted session against the real chat REPL and assert on what it renders')
+  .option('--json', 'emit machine-readable results instead of a report', false)
+  .option('--quiet', 'show pass/fail only, no replies', false)
+  .action(async (script: string, opts: { json: boolean; quiet: boolean }) => {
+    await driveCommand(script, { json: opts.json, quiet: opts.quiet });
   });
 
 const loop = program

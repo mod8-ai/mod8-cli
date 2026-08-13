@@ -1,0 +1,43 @@
+name: full session — host voice, inline read-only tools, explicit hand-off, return
+description: |
+  The end-to-end path a real user walks, driven against the real Ink REPL.
+  Covers the surface unit specs can't reach: the host voice answering, the
+  host using its READ-ONLY tool set inline (list_dir/read_file/grep) rather
+  than handing off for a question it can answer itself, an explicit switch
+  into work mode, and returning to host with @mod8.
+
+  Needs a working backend (proxy login or a provider key) — it makes real
+  model calls on purpose. That is the point: this is the test that would
+  have caught the BYOK front door being shut.
+
+timeout_ms: 60000
+
+steps:
+  - label: host answers in its own voice
+    send: say hi in exactly 3 words
+    expect:
+      mode: host
+
+  # Deliberate: the host is expected to answer this ITSELF using its
+  # read-only tools, not to hand off. See the "instead of theatrically
+  # handing off to claude" note in chat.tsx.
+  - label: host uses read-only tools inline and stays in host mode
+    send: list the files in this directory, then show me the one-line bash for counting them
+    expect:
+      mode: host
+      tool_used: ['Listed']
+      reply_matches: 'wc -l|ls'
+
+  - label: an explicit provider request switches to work mode
+    send: let me talk to claude
+    expect:
+      mode: work
+
+  - label: '@mod8 returns to the host voice'
+    send: "@mod8 thanks, that's all"
+    expect:
+      mode: host
+
+  - label: /exit leaves cleanly
+    send: /exit
+    no_turn: true
