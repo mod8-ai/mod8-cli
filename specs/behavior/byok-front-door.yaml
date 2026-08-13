@@ -1,0 +1,111 @@
+name: behavior — a BYOK user with any provider key can open mod8
+description: |
+  Bug confirmation (2026-08-12): `mod8` hard-required an Anthropic key at
+  startup and called process.exit(1) without one.  A user whose only key was
+  OpenAI/Google/DeepSeek installed mod8, set their key, typed `mod8`, and the
+  program quit — directly contradicting the product's headline promise of
+  "bring your own key, any provider".
+
+  The design intent stays intact: the HOST voice (the planning side) is still
+  Anthropic-only by choice — see HOST_PROVIDER_ID in chat.tsx, "don't
+  generalize the host, that's the brand".  What changed is that the host key is
+  no longer the price of entry.  With no Anthropic key, mod8 opens in WORK mode
+  on whatever provider the user actually configured.
+
+  These specs lock in the contract:
+    · at least one provider key  → mod8 opens, never exits non-zero
+    · zero provider keys         → refuses, with a provider-NEUTRAL message
+    · Anthropic present          → unchanged; host mode, no work-mode notice
+    · tool-capable providers are preferred over text-only ones
+
+tests:
+  - name: 'openai-only user opens mod8 in work mode instead of exiting'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-proj-fake000000000000000000000000",
+              "apiType": "openai-compat",
+              "name": "OpenAI (GPT)",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    repl:
+      run: 'unset ANTHROPIC_API_KEY; mod8 new'
+      timeout_ms: 6000
+      inputs:
+        - send: ''
+          delay_ms: 1500
+    expect:
+      stdout_contains:
+        - 'Starting in work mode with OpenAI (GPT)'
+        - 'mod8 keys set anthropic'
+
+  - name: 'a tool-capable provider is preferred over a text-only one'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "groq": {
+              "apiKey": "gsk_fake0000000000000000000000",
+              "apiType": "openai-compat",
+              "name": "Groq",
+              "baseUrl": "https://api.groq.com/openai/v1",
+              "defaultModel": "llama-3.3-70b-versatile",
+              "color": "#F59E0B"
+            },
+            "deepseek": {
+              "apiKey": "sk-fake00000000000000000000000",
+              "apiType": "openai-compat",
+              "name": "DeepSeek",
+              "baseUrl": "https://api.deepseek.com",
+              "defaultModel": "deepseek-chat",
+              "color": "#8B5CF6"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    repl:
+      run: 'unset ANTHROPIC_API_KEY; mod8 new'
+      timeout_ms: 6000
+      inputs:
+        - send: ''
+          delay_ms: 1500
+    expect:
+      stdout_contains:
+        - 'Starting in work mode with DeepSeek'
+
+  - name: 'anthropic user is unchanged — host mode, no work-mode notice'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "anthropic": {
+              "apiKey": "sk-ant-fake000000000000000000",
+              "apiType": "anthropic",
+              "name": "Claude",
+              "defaultModel": "claude-sonnet-4-6",
+              "color": "#D97757"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/providers.json
+    repl:
+      run: 'mod8 new'
+      timeout_ms: 6000
+      inputs:
+        - send: ''
+          delay_ms: 1500
+    expect:
+      stdout_contains:
+        - 'switch to claude'
+      stdout_omits:
+        - 'Starting in work mode'

@@ -388,9 +388,11 @@ function stripSwitchTokens(text: string): string {
   return cleaned.trimEnd();
 }
 
-function detectSwitch(text: string, currentMode: Mode): Mode | null {
+function detectSwitch(text: string, currentMode: Mode, hostAvailable = true): Mode | null {
   if (currentMode === 'host' && /<SWITCH_TO_WORK>/i.test(text)) return 'work';
-  if (currentMode === 'work' && /<SWITCH_TO_HOST>/i.test(text)) return 'host';
+  // A work model can emit <SWITCH_TO_HOST>, but honoring it with no Anthropic
+  // key would drop the user into a mode that cannot answer.  Stay put.
+  if (currentMode === 'work' && hostAvailable && /<SWITCH_TO_HOST>/i.test(text)) return 'host';
   return null;
 }
 
@@ -797,10 +799,19 @@ function buildTranscript(messages: SessionMessage[]): TranscriptItem[] {
   return items;
 }
 
-function App({
+export function App({
   session: initialSession,
+  initialMode = 'host',
+  initialWorkProviderId = DEFAULT_WORK_PROVIDER_ID,
+  hostAvailable = true,
 }: {
   session: Session;
+  /** Start in work mode when the host provider isn't configured (BYOK user
+   *  with a non-Anthropic key).  Host stays Anthropic — we just don't make
+   *  it the price of entry. */
+  initialMode?: Mode;
+  initialWorkProviderId?: string;
+  hostAvailable?: boolean;
 }) {
   const { exit } = useApp();
   const sessionRef = useRef<Session>(initialSession);
@@ -812,8 +823,8 @@ function App({
   const [transcript, setTranscript] = useState<TranscriptItem[]>(() =>
     buildTranscript(initialSession.messages)
   );
-  const [mode, setMode] = useState<Mode>('host');
-  const [workProviderId, setWorkProviderId] = useState<string>(DEFAULT_WORK_PROVIDER_ID);
+  const [mode, setMode] = useState<Mode>(initialMode);
+  const [workProviderId, setWorkProviderId] = useState<string>(initialWorkProviderId);
   const [workEntry, setWorkEntry] = useState<ProviderEntry | undefined>(undefined);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -879,7 +890,7 @@ function App({
 
   const aborterRef = useRef<AbortController | null>(null);
   const modeRef = useRef<Mode>('host');
-  const workIdRef = useRef<string>(DEFAULT_WORK_PROVIDER_ID);
+  const workIdRef = useRef<string>(initialWorkProviderId);
   const workEntryRef = useRef<ProviderEntry | undefined>(undefined);
   const titleGenerationStartedRef = useRef<boolean>(false);
   // Consecutive work-mode error count.  Resets on success or on switch-back.
@@ -1676,7 +1687,12 @@ function App({
     const currentMode = modeRef.current;
     const back = parseHostBack(value);
     if (back) {
-      if (currentMode === 'work') {
+      if (currentMode === 'work' && !hostAvailable) {
+        append({
+          kind: 'info',
+          text: "host mode needs an Anthropic key — staying in work mode. add one with:  mod8 keys set anthropic",
+        });
+      } else if (currentMode === 'work') {
         append({
           kind: 'mode-switch',
           targetMode: 'host',
@@ -2229,7 +2245,16 @@ function App({
             setLastWorkError(explained.short);
 
             const decision = fallbackDecision(consecutiveWorkErrorsRef.current);
-            if (decision === 'fallback') {
+            if (decision === 'fallback' && !hostAvailable) {
+              // Nowhere to fall back TO without an Anthropic key — surface the
+              // real problem instead of bouncing into an unusable host mode.
+              append({
+                kind: 'info',
+                text: `${speakerName} has failed ${consecutiveWorkErrorsRef.current} times in a row. ${explained.suggestion} — or switch provider with "use openai" / "use google", or add a host key: mod8 keys set anthropic`,
+              });
+              consecutiveWorkErrorsRef.current = 0;
+              setLastWorkError(null);
+            } else if (decision === 'fallback') {
               append({
                 kind: 'info',
                 text: `${speakerName} has been failing (${consecutiveWorkErrorsRef.current} errors in a row) — switching you back to mod8 host. ${explained.suggestion}`,
@@ -2279,7 +2304,7 @@ function App({
         }
       }
 
-      const switchTo = detectSwitch(collected, currentMode);
+      const switchTo = detectSwitch(collected, currentMode, hostAvailable);
       const cleaned = stripSwitchTokens(collected);
 
       // Agent path already pushed + appended its assistant chunks (between
@@ -2633,14 +2658,45 @@ export async function runChat(opts: RunChatOptions = {}): Promise<void> {
   // through the hosted proxy, so the local-key gate only applies when not
   // logged in.  Check after session resolution so a bad id surfaces "no
   // session" instead of "missing key".
+  // Host mode is Anthropic by design (see HOST_PROVIDER_ID).  But a BYOK user
+  // whose only key is OpenAI/Google/DeepSeek/etc must still be able to USE
+  // mod8 — the whole promise is "bring your own keys".  So a missing host key
+  // is no longer fatal: we drop straight into work mode on whatever they have
+  // configured, and only refuse when there is genuinely no key at all.
   const auth = await readAuth();
+  let startMode: Mode = 'host';
+  let startWorkProviderId: string = DEFAULT_WORK_PROVIDER_ID;
+  let hostAvailable = true;
+
   if (!auth) {
     const hostEntry = await resolveConfigured(HOST_PROVIDER_ID);
     if (!hostEntry) {
-      console.error(
-        'mod8: No Anthropic key configured. Run: mod8 login (recommended), or mod8 keys set anthropic.'
+      hostAvailable = false;
+      // Prefer a tool-capable SDK provider so work mode gets the full agent
+      // runtime (file edits, bash, diffs) rather than the text-only path.
+      const ids = await configuredProviderIds();
+      const preferred =
+        SDK_PROVIDER_IDS.find((id) => ids.includes(id)) ?? ids[0];
+
+      if (!preferred) {
+        console.error(
+          chalk.red('mod8: ') +
+            'no provider keys configured yet.\n' +
+            '  Add one of your own:  mod8 keys set openai   (or anthropic, google, deepseek, …)\n' +
+            '  See all providers:    mod8 keys list'
+        );
+        process.exit(1);
+      }
+
+      startMode = 'work';
+      startWorkProviderId = preferred;
+      const entry = await resolveConfigured(preferred);
+      console.log(
+        chalk.dim(
+          `Starting in work mode with ${entry?.name ?? preferred} — no Anthropic key, so mod8's host voice is off.\n` +
+            `Add it any time with: mod8 keys set anthropic\n`
+        )
       );
-      process.exit(1);
     }
   }
 
@@ -2660,5 +2716,12 @@ export async function runChat(opts: RunChatOptions = {}): Promise<void> {
     );
   }
 
-  render(<App session={session} />);
+  render(
+    <App
+      session={session}
+      initialMode={startMode}
+      initialWorkProviderId={startWorkProviderId}
+      hostAvailable={hostAvailable}
+    />
+  );
 }

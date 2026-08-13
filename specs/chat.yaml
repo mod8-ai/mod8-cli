@@ -24,7 +24,10 @@ tests:
         - "/clear"
         - "/exit"
 
-  - name: mod8 new without key reports friendly key error
+  # BYOK front door: a missing Anthropic key is NOT fatal — mod8 only refuses
+  # when there is no provider key at all, and it must not privilege Anthropic
+  # in the message (the product promise is "bring your own key", any provider).
+  - name: mod8 new with no providers at all reports a provider-neutral error
     repl:
       run: "unset ANTHROPIC_API_KEY; mod8 new"
       timeout_ms: 6000
@@ -33,8 +36,9 @@ tests:
           delay_ms: 1500
     expect:
       stderr_contains:
-        - "No Anthropic key configured"
-        - "mod8 keys set anthropic"
+        - "no provider keys configured yet"
+        - "mod8 keys set openai"
+        - "mod8 keys list"
 
   - name: mod8 resume on missing id is rejected before chat starts
     repl:

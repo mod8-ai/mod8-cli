@@ -89,7 +89,7 @@ tests:
     expect:
       stdout_contains:
         - "You are a coding agent"
-      stdout_not_contains:
+      stdout_omits:
         - "# Project context"
         - "Project context is guidance"
 
