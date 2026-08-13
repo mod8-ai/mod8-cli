@@ -5,6 +5,7 @@
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { App } from '../dist/commands/chat.js';
+import { createSession } from '../dist/storage/sessions.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -17,9 +18,35 @@ async function waitFor(predicate, { timeoutMs = 60000, interval = 200 } = {}) {
   return false;
 }
 
-const { lastFrame, stdin, unmount } = render(React.createElement(App));
+// App requires a session — rendering without one produced empty frames and
+// made this test look "broken" for months.
+const session = await createSession();
+const { lastFrame, stdin, unmount } = render(React.createElement(App, { session }));
 
 await sleep(150);
+
+// A turn is complete when the thinking indicator disappears.  Don't key off
+// footer text ("tok ·") — that string moved to a context meter and silently
+// broke every wait in this file.
+const idle = () => !/thinking…/.test(lastFrame() ?? '');
+const settled = async (label) => {
+  // Wait for the turn to START before waiting for it to finish — otherwise
+  // idle() is trivially true the instant after Enter and every check passes
+  // without testing anything.  A very fast turn may never show the indicator,
+  // so fall through after a short grace and rely on the frame having grown.
+  // Count rendered reply lines, not frame length: an Ink frame is a fixed
+  // height viewport, so its character count does NOT grow as the transcript
+  // does.  Reply lines start with "│ "; the input box renders "│ ›".
+  const replies = () => ((lastFrame() ?? '').match(/^│ (?!›)/gm) ?? []).length;
+  const before = replies();
+  await waitFor(() => !idle(), { timeoutMs: 5000 });
+  const done = await waitFor(() => idle(), { timeoutMs: 45000 });
+  const answered = replies() > before;
+  const ok = done && answered;
+  console.log(ok ? `  ✓ ${label}` : `  → FAILED (${label}: done=${done} answered=${answered})`);
+  return ok;
+};
+
 
 console.log('=== Initial frame ===');
 console.log(lastFrame());
@@ -31,8 +58,7 @@ stdin.write('say hi in exactly 3 words');
 await sleep(100);
 stdin.write('\r');
 
-console.log('  …waiting for stream to complete (looking for stats footer "tok ·")');
-const got1 = await waitFor(() => /tok ·/.test(lastFrame() ?? ''), { timeoutMs: 30000 });
+const got1 = await settled('turn 1 (host)');
 console.log(got1 ? '  → stream completed' : '  → TIMED OUT');
 console.log('');
 console.log('--- Frame after turn 1 ---');
@@ -56,11 +82,7 @@ await sleep(100);
 stdin.write('\r');
 
 console.log('  …waiting for work-mode stream to complete');
-const startCount = (lastFrame() ?? '').match(/tok ·/g)?.length ?? 0;
-const got2 = await waitFor(
-  () => ((lastFrame() ?? '').match(/tok ·/g)?.length ?? 0) > startCount,
-  { timeoutMs: 60000 }
-);
+const got2 = await settled('turn 2 (work)');
 console.log(got2 ? '  → stream completed' : '  → TIMED OUT');
 console.log('');
 console.log('--- Frame after turn 2 ---');
@@ -74,11 +96,7 @@ await sleep(100);
 stdin.write('\r');
 
 console.log('  …waiting for host stream to complete');
-const startCount2 = (lastFrame() ?? '').match(/tok ·/g)?.length ?? 0;
-const got3 = await waitFor(
-  () => ((lastFrame() ?? '').match(/tok ·/g)?.length ?? 0) > startCount2,
-  { timeoutMs: 30000 }
-);
+const got3 = await settled('turn 3 (back to host)');
 console.log(got3 ? '  → stream completed' : '  → TIMED OUT');
 console.log('');
 console.log('--- Frame after turn 3 ---');
