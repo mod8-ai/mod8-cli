@@ -62,6 +62,7 @@ export async function loadPhase4Adapters(): Promise<void> {
   await import('./front.js');
   await import('./email-imap.js');
   await import('./twitter.js');
+  await import('./meta.js');
   await import('./bluesky.js');
   await import('./hn.js');
   await import('./reddit.js');
