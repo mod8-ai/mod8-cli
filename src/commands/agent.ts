@@ -75,7 +75,12 @@ export async function runAgent(
     } = {};
     try {
       const info = await getProjectInfo(process.cwd());
-      attribution = { projectId: info.projectId, projectName: info.projectName };
+      // Never attribute turns run outside an actual project — running mod8
+      // in the home directory once produced a dashboard entry named after
+      // the user with 99 turns against it.
+      if (!info.isHome) {
+        attribution = { projectId: info.projectId, projectName: info.projectName };
+      }
       const topic = classifyTopic(task);
       if (!isRideAlong(topic)) attribution.topic = topic;
     } catch {

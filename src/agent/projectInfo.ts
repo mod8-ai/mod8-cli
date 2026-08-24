@@ -25,6 +25,7 @@ import { promises as fs } from 'node:fs';
 import { existsSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import { load as parseYaml } from 'js-yaml';
 
 export interface ProjectInfo {
@@ -47,6 +48,11 @@ export interface ProjectInfo {
   /** Canonical path the projectId was derived from — git root if found,
    *  else cwd.  Exposed for debugging; not sent to backend. */
   resolvedRoot: string;
+  /** True when the resolved root is the user's home directory or the
+   *  filesystem root — i.e. mod8 was run somewhere that is not a project.
+   *  Callers must NOT attribute turns to these: running `mod8` in ~ once
+   *  created a dashboard project named after the user with 99 turns. */
+  isHome: boolean;
 }
 
 /** Maximum walk-up depth when searching for a git root or .mod8 marker.
@@ -62,7 +68,9 @@ export async function getProjectInfo(cwd: string): Promise<ProjectInfo> {
   const description = explicit?.description?.trim() || '';
   const icon = explicit?.icon?.trim() || '📁';
   const projectId = hashRoot(root);
-  return { projectId, projectName: name, description, stack, icon, resolvedRoot: root };
+  const home = homedir();
+  const isHome = root === home || root === '/' || root === '.';
+  return { projectId, projectName: name, description, stack, icon, resolvedRoot: root, isHome };
 }
 
 /** Walk up from cwd looking for a .mod8/project.yaml or a .git directory.

@@ -68,6 +68,21 @@ export async function buildProviderModel(
   resolved: ResolvedModel,
   attribution?: ProxyAttribution
 ): Promise<ProviderConnection> {
+  // YOUR OWN KEY WINS.  Auth used to short-circuit this unconditionally, so
+  // `mod8 login` — the thing you must do to see your dashboard — silently
+  // stopped using the key you configured and routed every call through the
+  // metered proxy, which answers 402 once the signup credit runs out.  A BYOK
+  // user who logged in got a broken CLI and no explanation.
+  //
+  // Precedence now: local key for THIS provider -> proxy (if logged in) ->
+  // local (which raises the "no key configured" error with instructions).
+  // Set MOD8_FORCE_PROXY=1 to deliberately bill a configured provider through
+  // the proxy anyway.
+  const forceProxy = process.env['MOD8_FORCE_PROXY'] === '1';
+  if (!forceProxy) {
+    const localEntry = await resolveConfigured(resolved.kind);
+    if (localEntry?.apiKey) return buildLocalConnection(resolved);
+  }
   const auth = await readAuth();
   if (auth) {
     const proxyUrl = effectiveProxyUrl(auth);

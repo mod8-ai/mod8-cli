@@ -1,0 +1,48 @@
+name: behavior — your own key beats the proxy
+description: |
+  Bug confirmation (2026-08-24): buildProviderModel checked readAuth() FIRST
+  and returned a proxy connection unconditionally when an auth file existed.
+  So `mod8 login` — the thing a user must do to see their dashboard — silently
+  stopped using the API key they had configured and routed every call through
+  the metered proxy, which answers 402 once the signup credit is spent.
+
+  A BYOK user who logged in got a broken CLI and no explanation. Under the
+  BYOK-free strategy that is every user the dashboard is built for.
+
+  Precedence is now: a local key for THIS provider -> the proxy (if logged in)
+  -> local (which raises the "no key configured" error with instructions).
+  MOD8_FORCE_PROXY=1 opts back in to billing a configured provider via proxy.
+
+tests:
+  - name: 'dev:resolve reports the local key when one is configured and logged in'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {"mod8Key":"m8_fake_for_spec","proxyUrl":"https://proxy.example.invalid"}
+          JSON
+          cat > $MOD8_CONFIG_DIR/providers.json <<JSON
+          {
+            "openai": {
+              "apiKey": "sk-proj-fake0000000000000000000000",
+              "apiType": "openai-compat",
+              "name": "OpenAI (GPT)",
+              "baseUrl": "https://api.openai.com/v1",
+              "defaultModel": "gpt-4o",
+              "color": "#10B981"
+            }
+          }
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json $MOD8_CONFIG_DIR/providers.json
+    shell: 'mod8 providers'
+    expect:
+      stdout_contains:
+        - 'openai'
+
+  - name: 'home directory is never attributed as a project'
+    shell: 'cd $HOME && mod8 dev:project-info'
+    expect:
+      stdout_contains:
+        - '"resolvedRoot"'
+      stdout_omits:
+        - '"isHome":false'
