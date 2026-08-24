@@ -164,6 +164,52 @@ export async function decide(ctx: ProductContext, id: string, transition: { stat
   }
 }
 
+/** Record the OUTCOME of an already-decided approval.
+ *
+ *  `decide()` archives the item and unlinks the pending file on the first
+ *  transition, so calling it again — as the act phase did to mark an
+ *  approval 'applied' — threw ApprovalNotFound.  The practical effect was
+ *  the worst kind: the merge landed, HEAD moved, and the audit trail
+ *  recorded that nothing had happened.  No approval had ever reached
+ *  'applied'.
+ *
+ *  This appends the outcome against the archived item instead of requiring
+ *  a pending file.  Returns null when the id is unknown, so a caller that
+ *  has already changed the world never crashes on bookkeeping.
+ */
+export async function recordOutcome(
+  ctx: ProductContext,
+  id: string,
+  transition: { state: ApprovalState; decidedBy: string; appliedResult?: Record<string, unknown> },
+): Promise<ApprovalItem | null> {
+  const release = await acquireQueueLock(ctx);
+  try {
+    const existing = await load(ctx, id);
+    if (!existing) return null;
+    const decided: ApprovalItem = {
+      ...existing,
+      state: transition.state,
+      decidedBy: transition.decidedBy,
+      decidedAt: existing.decidedAt ?? Date.now(),
+      ...(transition.appliedResult
+        ? { appliedResult: transition.appliedResult, appliedAt: Date.now() }
+        : {}),
+    };
+    await archiveAppend(ctx, decided);
+    await appendIndex(ctx, {
+      id: decided.id,
+      createdAt: decided.createdAt,
+      kind: decided.kind,
+      title: decided.title,
+      state: decided.state,
+      risk: decided.risk,
+    });
+    return decided;
+  } finally {
+    await release();
+  }
+}
+
 export async function listPending(ctx: ProductContext): Promise<ApprovalItem[]> {
   const dir = productPath(ctx, APPROVALS_DIR, PENDING_SUBDIR);
   if (!existsSync(dir)) return [];

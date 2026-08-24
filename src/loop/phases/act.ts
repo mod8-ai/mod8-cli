@@ -27,7 +27,7 @@
  */
 
 import { runDeterministicPhase, type PhaseResult } from '../runPhase.js';
-import { load as loadApproval, decide as decideApproval } from '../../approval/store.js';
+import { load as loadApproval, recordOutcome } from '../../approval/store.js';
 import { capture as captureSnapshot } from '../../memory/snapshots.js';
 import * as worktree from '../worktree.js';
 import * as state from '../state.js';
@@ -132,7 +132,7 @@ export async function run(
       if (!result || failureReason) {
         // Roll the approval back to a failed state.
         try {
-          await decideApproval(ctx, approval.id, {
+          await recordOutcome(ctx, approval.id, {
             state: 'failed',
             decidedBy: 'act-phase',
             appliedResult: { error: failureReason ?? 'no result returned' },
@@ -151,7 +151,7 @@ export async function run(
       // hard-fail; Phase 4 wiring will downgrade-to-approval-at-L+1.
       if (!result.rollbackRecipe?.description || !result.rollbackRecipe?.payload) {
         failureReason = `adapter ${result.adapter} returned no rollback recipe`;
-        await decideApproval(ctx, approval.id, {
+        await recordOutcome(ctx, approval.id, {
           state: 'failed',
           decidedBy: 'act-phase',
           appliedResult: { error: failureReason },
@@ -166,7 +166,7 @@ export async function run(
 
       // 3. Mark approval applied + set waitUntilTs for measure.
       const waitUntilTs = Date.now() + policy.cadence.measure_wait_hours * 60 * 60 * 1000;
-      await decideApproval(ctx, approval.id, {
+      await recordOutcome(ctx, approval.id, {
         state: 'applied',
         decidedBy: 'act-phase',
         appliedResult: { ...result.payload, rollback: result.rollbackRecipe },
