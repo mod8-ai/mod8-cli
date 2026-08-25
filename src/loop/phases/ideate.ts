@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { promises as fs } from 'node:fs';
 import { existsSync } from 'node:fs';
+import { gateProposals } from '../proposalGate.js';
 import type { PolicyConfig, ProductContext, SignalBundle } from '../types.js';
 import { runStructuredPhase, runDeterministicPhase } from '../runPhase.js';
 import type { PhaseResult } from '../runPhase.js';
@@ -121,9 +122,29 @@ export async function run(
     }
   }
 
+  // Deterministic gate — costs nothing and catches the failure mode nothing
+  // downstream checks: a proposal about files that are not in this repo.
+  // Saved proposals are kept on disk either way so a drop is auditable; only
+  // the survivors are returned to prioritize.
+  const { kept, dropped } = gateProposals(proposals, ctx.repoRoot);
+  for (const d of dropped) {
+    await events.append(ctx, {
+      phase: 'ideate',
+      kind: 'skipped',
+      payload: { gate: 'dropped', proposalId: d.proposalId, title: d.title, reason: d.reason },
+    });
+  }
+  if (dropped.length) {
+    await events.append(ctx, {
+      phase: 'ideate',
+      kind: 'skipped',
+      payload: { gate: 'summary', produced: proposals.length, passed: kept.length, dropped: dropped.length },
+    });
+  }
+
   return {
     ok: true,
-    output: { schemaVersion: 1, proposals },
+    output: { schemaVersion: 1, proposals: kept },
     durationMs: llmResult.durationMs,
   };
 }

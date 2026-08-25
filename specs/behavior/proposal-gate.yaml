@@ -1,0 +1,36 @@
+name: behavior — proposals about files that do not exist are dropped
+description: |
+  Bug confirmation (2026-08-25): a proposal's `targetFiles` was a plain
+  z.array(z.string()) and nothing anywhere checked those paths against the
+  disk. prioritize scores only impact/risk/effort; build's only path logic is
+  checkFileGuards, which matches the policy's off_limits patterns and never
+  asks whether a file exists.
+
+  So a proposal citing src/auth/session.ts in a repo with no src/auth/ passed
+  ideate, passed prioritize, and reached build — where a git worktree was
+  created and an 18-step agent began editing against a codebase that does not
+  look the way the proposal assumed.
+
+  The gate runs between ideate and prioritize. It makes no model call and no
+  network request; it reads the disk. Kinds that must edit something existing
+  require the file itself; feature-add may create a new file but its parent
+  directory must be real, which still catches an invented subtree.
+
+  Also fixed in the same change: per_phase_usd defaulted to 0.10 while the
+  build phase's pre-flight estimate is (4000*3 + 8000*15)/1e6 = $0.1320 on
+  sonnet, so build could never start on a stock install. Raised to 0.60.
+
+tests:
+  - name: 'budget default admits the build phase pre-flight estimate'
+    shell: 'node -e "const p=require(String.raw`/Users/yonatanzlit/mod8/dist/loop/policy.js`); const d=p.DEFAULT_POLICY ?? p.defaults ?? null; console.log(JSON.stringify(d?.budget ?? {}))"'
+    expect:
+      stdout_omits:
+        - '"per_phase_usd":0.1'
+
+  - name: 'connect scaffolds a policy whose per_phase_usd clears the build estimate'
+    shell: 'mod8 connect add gatecheck >/dev/null 2>&1; cat $MOD8_CONFIG_DIR/products/gatecheck/policy.yaml'
+    expect:
+      stdout_contains:
+        - 'per_phase_usd: 0.60'
+      stdout_omits:
+        - 'per_phase_usd: 0.10'

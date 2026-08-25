@@ -29,9 +29,11 @@ autonomy: 1
 
 # Budget caps (USD) — override _defaults here.
 budget:
-  monthly_usd: 25
-  per_tick_usd: 0.25
-  per_phase_usd: 0.10
+  monthly_usd: 50
+  per_tick_usd: 1.5
+  # Must stay above the build phase's pre-flight estimate (~$0.132 on sonnet)
+  # or build can never start.  See src/loop/policy.ts.
+  per_phase_usd: 0.60
   per_proposal_usd: 2
   per_campaign_usd: 0
 

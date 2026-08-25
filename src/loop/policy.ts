@@ -33,9 +33,14 @@ import type { ProductContext } from './types.js';
 const DEFAULTS = {
   autonomy: 1 as const,
   budget: {
-    monthly_usd: 25,
-    per_tick_usd: 0.25,
-    per_phase_usd: 0.10,
+    monthly_usd: 50,
+    per_tick_usd: 1.5,
+    // MUST exceed the build phase's pre-flight estimate or the loop can never
+    // finish a tick.  runPhase.estimateCostUsd assumes 4k input and defaults
+    // runLlmToolsPhase to 8k output, so on sonnet that is
+    // (4000*3 + 8000*15)/1e6 = $0.1320 — which the old 0.10 cap rejected on
+    // every stock install.  0.60 leaves headroom for a pricier model.
+    per_phase_usd: 0.60,
     per_proposal_usd: 2,
     per_campaign_usd: 0,
   },
