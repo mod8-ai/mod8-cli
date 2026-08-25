@@ -5,6 +5,56 @@ All notable changes to mod8 are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.32] — 2026-08-24
+
+Everything here is about the same thing: mod8 promises "bring your own key,
+any provider", and until this release that promise broke in three different
+places.
+
+### Fixed
+
+- **A key you configured is now actually used.** `buildProviderModel` checked
+  for a login *first* and returned a proxy connection unconditionally when one
+  existed. So `mod8 login` — needed to see your dashboard — silently stopped
+  using your own API key and routed every call through the metered proxy,
+  which returns 402 once the signup credit is spent. Precedence is now: your
+  key for that provider → the proxy if you're logged in → a clear error.
+  `MOD8_FORCE_PROXY=1` opts back in.
+- **mod8 opens without an Anthropic key.** It called `process.exit(1)` when no
+  Anthropic key was configured, so a user whose only key was OpenAI, Google or
+  DeepSeek installed mod8, set their key, typed `mod8`, and the program quit.
+  It now opens in work mode on whatever provider you have, preferring a
+  tool-capable one. It refuses only when there is no key at all, with a
+  provider-neutral message. The host voice is still Anthropic by design — it
+  just is no longer the price of entry.
+- **Three follow-on paths** that would have dropped a keyless user into a host
+  mode that cannot answer now explain instead: a model-emitted
+  `<SWITCH_TO_HOST>`, asking to go "back to mod8", and the auto-fallback after
+  repeated provider errors.
+- **Running mod8 in your home directory no longer creates a project.**
+  `getProjectInfo` returns `isHome`, and turns there are not attributed. This
+  had produced a dashboard project named after the user with 99 turns on it.
+- **Approval outcomes are recorded instead of throwing.** The approval Panel
+  archives an item on the first transition, so the act phase's second call
+  threw `ApprovalNotFound` every time — the merge landed, HEAD moved, and the
+  audit trail said nothing had happened. New `store.recordOutcome()`.
+
+### Added
+
+- **`mod8 drive <script.yaml>`** — scripted end-to-end tests against the real
+  chat REPL. Renders the actual app, sends input, and asserts on what renders:
+  `reply_contains`, `reply_omits`, `reply_matches`, `tool_used`, `mode`,
+  `silent`. `--json` for CI, exit code reflects pass/fail, and unknown
+  assertion keys are rejected at load rather than silently ignored.
+- **`meta` adapter** — Facebook Page and Instagram posting for mod8 Social.
+  Credentials load per-product, never from source. Not yet reachable from the
+  loop; see docs/HARNESS.md.
+
+### Notes
+
+- Entries for 0.3.0 through 0.5.31 were never written. This file resumes here
+  rather than reconstructing them.
+
 ## [0.2.0] — 2026-05-10
 
 The proxy bridge. Optional — local providers.json still works exactly as it
