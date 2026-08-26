@@ -164,7 +164,7 @@ export async function standupCommand(opts: StandupOptions): Promise<void> {
   process.stderr.write(chalk.dim(`standup: ${d.companies.length} companies · ${d.companies.reduce((n, c) => n + c.memories.length, 0)} memories · last ${d.days} days · via ${providerId}\n\n`));
   let lastChar = '';
   try {
-    for await (const ev of streamProviderChat({ providerId, system: SYSTEM, messages: [{ role: 'user', content: buildContext(d) }] })) {
+    for await (const ev of streamProviderChat({ providerId, system: SYSTEM, maxTokens: 12_000, messages: [{ role: 'user', content: buildContext(d) }] })) {
       if (ev.type === 'text') { process.stdout.write(ev.delta); lastChar = ev.delta.slice(-1); }
     }
   } catch (err) {
