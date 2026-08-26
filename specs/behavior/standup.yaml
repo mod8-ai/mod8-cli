@@ -1,0 +1,58 @@
+name: behavior — mod8 standup (reads Claude Code memory + history, no prompt)
+description: |
+  `mod8 standup` is the company briefing built from what Claude Code already
+  wrote on disk: memory files under ~/.claude/projects/*/memory/ and typed
+  prompts in ~/.claude/history.jsonl.  These specs point it at a fixture
+  via MOD8_CLAUDE_DIR and assert on the deterministic `--raw` digest:
+  companies are attributed from memory names AND prompt text, working-style
+  feedback is kept out of the company list, and API keys are scrubbed at
+  index time.
+
+tests:
+  - name: standup --raw groups memories and prompts per company and scrubs keys
+    shell: |
+      set -e
+      C=$MOD8_CONFIG_DIR/claude
+      mkdir -p $C/projects/-home-me/memory
+      cat > $C/projects/-home-me/memory/project_mod8_plan.md <<'M'
+      ---
+      name: project_mod8_plan
+      description: mod8 plan of record
+      metadata:
+        type: project
+      ---
+      Anthropic key was sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz0123456789 in the old notes.
+      M
+      cat > $C/projects/-home-me/memory/feedback_no_picker.md <<'M'
+      ---
+      name: feedback_no_picker
+      description: never use picker UI
+      metadata:
+        type: feedback
+      ---
+      Plain text only.
+      M
+      NOW=$(node -e 'console.log(Date.now())')
+      printf '{"display":"safer global: fix the SOS button please","pastedContents":{},"timestamp":%s,"project":"/home/me","sessionId":"s1"}\n' $NOW > $C/history.jsonl
+      printf '{"display":"go","pastedContents":{},"timestamp":%s,"project":"/home/me","sessionId":"s1"}\n' $NOW >> $C/history.jsonl
+      MOD8_CLAUDE_DIR=$C mod8 standup --raw --days 7
+    expect:
+      stdout_contains:
+        - "companies: 2"
+        - "## mod8"
+        - "[memory] mod8 plan of record"
+        - "## safer"
+        - "[asked] safer global: fix the SOS button please"
+        - "(+1 not about any company)"
+      stdout_omits:
+        - "## general"
+        - "## feedback"
+        - "sk-ant-api03-abcdefghijklmnop"
+
+  - name: standup with nothing on disk says so and exits 0
+    shell: |
+      mkdir -p $MOD8_CONFIG_DIR/empty && MOD8_CLAUDE_DIR=$MOD8_CONFIG_DIR/empty mod8 standup --raw
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - "nothing found"

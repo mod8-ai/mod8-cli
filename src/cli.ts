@@ -205,6 +205,17 @@ program
   });
 
 program
+  .command('standup')
+  .description('The company briefing — what moved, what is stuck, what needs you (reads Claude Code memory + history, no prompt needed)')
+  .option('-d, --days <n>', 'window in days', '7')
+  .option('-p, --project <name>', 'only companies matching this label')
+  .option('--raw', 'print the deterministic digest without calling a model')
+  .action(async (o: { days: string; project?: string; raw?: boolean }) => {
+    const { standupCommand } = await import('./commands/standup.js');
+    await standupCommand({ days: Number(o.days) || 7, project: o.project, raw: o.raw });
+  });
+
+program
   .command('verify')
   .description("Run mod8's self-verification spec suite (specs/*.yaml)")
   .action(async () => {

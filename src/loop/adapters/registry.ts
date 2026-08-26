@@ -36,6 +36,7 @@ export function listByKind(kind: 'source' | 'sink' | 'both'): Adapter<AdapterCre
  *  calls register() on import. */
 export async function loadPhase1Adapters(): Promise<void> {
   await import('./git-local.js');
+  await import('./claude-code.js');
   await import('./github.js');
 }
 
