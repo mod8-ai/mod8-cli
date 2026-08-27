@@ -229,8 +229,24 @@ async function mergeLocally(ctx: ProductContext, approval: import('../../approva
   if (!handle) {
     throw new Error(`worktree for proposal ${approval.proposalId} no longer exists`);
   }
-  // Fast-forward merge if possible.
-  await execFileP('git', ['merge', '--ff', handle.branch], { cwd: ctx.repoRoot });
+  // Safe merge: refuse on a dirty tracked tree (a merge would tangle the
+  // user's in-progress edits with the loop's), fast-forward when possible,
+  // otherwise a real merge commit — and abort cleanly on conflict so the
+  // repo is never left mid-merge.
+  const dirty = (await execFileP('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: ctx.repoRoot })).stdout.trim();
+  if (dirty) {
+    throw new Error(`repo has uncommitted tracked changes — commit or stash before approving:\n${dirty.slice(0, 400)}`);
+  }
+  try {
+    await execFileP('git', ['merge', '--ff-only', handle.branch], { cwd: ctx.repoRoot });
+  } catch {
+    try {
+      await execFileP('git', ['merge', '--no-ff', '--no-edit', '-m', `Merge ${handle.branch}\n\n${ctx.selfCommitTrailer}/${approval.proposalId}`, handle.branch], { cwd: ctx.repoRoot });
+    } catch (err) {
+      try { await execFileP('git', ['merge', '--abort'], { cwd: ctx.repoRoot }); } catch { /* nothing to abort */ }
+      throw new Error(`merge of ${handle.branch} conflicted and was aborted: ${err instanceof Error ? err.message.slice(0, 300) : String(err)}`);
+    }
+  }
   // Capture the resulting sha for rollback.
   const after = await execFileP('git', ['rev-parse', 'HEAD'], { cwd: ctx.repoRoot });
   const newSha = after.stdout.trim();

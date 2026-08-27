@@ -353,6 +353,23 @@ program
     await approvalsCommand(opts);
   });
 
+const approvalsCli = program.command('approvals-cli').description('Non-interactive approvals (for scripts and tests)');
+approvalsCli
+  .command('list')
+  .option('-s, --slug <slug>', 'product slug', 'mod8')
+  .action(async (o: { slug: string }) => {
+    const { approvalsList } = await import('./approval/command.js');
+    await approvalsList(o);
+  });
+approvalsCli
+  .command('decide <id> <verdict>')
+  .description("approve|reject — approve dispatches the act phase like the panel's [a]")
+  .option('-s, --slug <slug>', 'product slug', 'mod8')
+  .action(async (id: string, verdict: string, o: { slug: string }) => {
+    const { approvalsDecide } = await import('./approval/command.js');
+    await approvalsDecide(id, verdict, o);
+  });
+
 program
   .command('balance')
   .description('Show your mod8 proxy credit balance (requires `mod8 login`)')
