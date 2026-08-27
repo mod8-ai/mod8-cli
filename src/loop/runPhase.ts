@@ -290,7 +290,8 @@ export async function runLlmToolsPhase<TOutput>(opts: RunLlmToolsOptions<TOutput
         const output = (part as { output?: unknown }).output;
         if (typeof output === 'string' && output.startsWith('Error:')) toolErrors++;
       } else if (part.type === 'error') {
-        reason = String((part as { error?: unknown }).error ?? 'streamText error');
+        const e = (part as { error?: unknown }).error;
+        reason = e instanceof Error ? `${e.name}: ${e.message}` : typeof e === 'object' && e ? JSON.stringify(e).slice(0, 600) : String(e ?? 'streamText error');
         break;
       }
     }

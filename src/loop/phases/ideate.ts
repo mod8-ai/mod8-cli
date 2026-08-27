@@ -16,7 +16,7 @@ import type { PolicyConfig, ProductContext, SignalBundle } from '../types.js';
 import { runStructuredPhase, runDeterministicPhase } from '../runPhase.js';
 import type { PhaseResult } from '../runPhase.js';
 import { load as loadPrompt } from '../promptLoader.js';
-import { newProposalId, save as saveProposal, type Proposal, PROPOSAL_KINDS } from '../proposal.js';
+import { newProposalId, save as saveProposal, list as proposalIndex, type Proposal, PROPOSAL_KINDS } from '../proposal.js';
 import { productFiles } from '../../memory/paths.js';
 import * as feedback from '../../memory/feedback.js';
 import * as events from '../events.js';
@@ -177,6 +177,12 @@ async function assembleUserMessage(ctx: ProductContext, bundle: SignalBundle): P
     }));
   }
 
+  // What is ALREADY DONE and what was ALREADY PROPOSED.  Without this the
+  // ideate model reads the commit log as a to-do list and re-proposes the
+  // last three commits every tick (observed on ticks #8, #9, #10).
+  const recentCommits = (await feedback.readAll(ctx, 'git-local', 25)).map((s) => `- ${s.title}`);
+  const prior = (await proposalIndex(ctx)).slice(-30).map((e) => `- [${e.state}] ${e.title}`);
+
   return [
     '## product.md',
     productMd,
@@ -193,6 +199,12 @@ async function assembleUserMessage(ctx: ProductContext, bundle: SignalBundle): P
     '## recent signals by source',
     JSON.stringify(recentBySource, null, 2),
     '',
-    'Now propose 1-5 improvements per the schema.',
+    '## ALREADY DONE — recent commits on this repo. Do NOT propose these or anything a commit message says was fixed.',
+    recentCommits.join('\n') || '(none)',
+    '',
+    '## ALREADY PROPOSED — earlier proposals and their fate. Do NOT repeat a title or its substance.',
+    prior.join('\n') || '(none)',
+    '',
+    'Now propose 1-5 improvements per the schema. Each must be NEW work with a concrete diff, not a restatement of a commit or a prior proposal.',
   ].join('\n');
 }
