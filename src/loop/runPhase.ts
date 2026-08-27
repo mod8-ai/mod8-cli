@@ -219,6 +219,8 @@ export interface RunLlmToolsOptions<TOutput> extends LlmPhaseBaseOptions {
   userMessage: string;
   /** Max agent steps. */
   maxSteps?: number;
+  /** Hard wall-clock cap for the whole tool loop (default 12 min). */
+  hardTimeoutMs?: number;
   /** Caller maps the completed stream into the phase output. */
   finalize(streamSummary: { text: string; toolCalls: number; toolErrors: number }): TOutput | null;
 }
@@ -256,15 +258,26 @@ export async function runLlmToolsPhase<TOutput>(opts: RunLlmToolsOptions<TOutput
   let inputTokens = 0;
   let outputTokens = 0;
 
+  // The model call had no timeout: tick #9 hung 17 minutes on a stream that
+  // never returned a byte.  Idle = no stream event for IDLE_MS; hard = total.
+  const IDLE_MS = 120_000;
+  const HARD_MS = opts.hardTimeoutMs ?? 12 * 60_000;
+  const abort = new AbortController();
+  let idleTimer: NodeJS.Timeout | undefined;
+  const armIdle = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => { reason = `phase idle timeout (${IDLE_MS / 1000}s without a stream event)`; abort.abort(); }, IDLE_MS); };
+  const hardTimer = setTimeout(() => { reason = `phase hard timeout (${HARD_MS / 60_000}m)`; abort.abort(); }, HARD_MS);
   try {
+    armIdle();
     const result = streamText({
       model: pick.connection.model,
       system: opts.system,
       prompt: opts.userMessage,
       tools: opts.tools,
       stopWhen: stepCountIs(opts.maxSteps ?? 12),
+      abortSignal: abort.signal,
     });
     for await (const part of result.fullStream) {
+      armIdle();
       if (part.type === 'text-delta') text += (part as { text: string }).text;
       else if (part.type === 'tool-call') {
         toolCalls++;
@@ -281,11 +294,16 @@ export async function runLlmToolsPhase<TOutput>(opts: RunLlmToolsOptions<TOutput
         break;
       }
     }
-    const usage = await result.usage;
-    inputTokens = usage.inputTokens ?? 0;
-    outputTokens = usage.outputTokens ?? 0;
+    if (!abort.signal.aborted) {
+      const usage = await result.usage;
+      inputTokens = usage.inputTokens ?? 0;
+      outputTokens = usage.outputTokens ?? 0;
+    }
   } catch (err) {
-    reason = err instanceof Error ? err.message : String(err);
+    if (reason === undefined) reason = err instanceof Error ? err.message : String(err);
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
+    clearTimeout(hardTimer);
   }
 
   const costUsd = estimateActualCost(pick.modelId, inputTokens, outputTokens);

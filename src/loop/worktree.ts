@@ -98,6 +98,14 @@ export async function create(ctx: ProductContext, proposalId: string, opts?: { b
     maxBuffer: 4 * 1024 * 1024,
   });
 
+  // Share the repo's node_modules — untracked, so a fresh worktree has none
+  // and every test command is red before the agent starts.  Symlink, don't
+  // copy: it's read-only from the agent's point of view and instant.
+  const nm = resolve(ctx.repoRoot, 'node_modules');
+  if (existsSync(nm) && !existsSync(resolve(worktreePath, 'node_modules'))) {
+    try { await fs.symlink(nm, resolve(worktreePath, 'node_modules'), 'dir'); } catch { /* tolerate */ }
+  }
+
   const record: WorktreeRecord = {
     schemaVersion: 1,
     proposalId,

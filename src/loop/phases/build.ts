@@ -46,6 +46,7 @@ export interface BuildOutput {
 }
 
 async function runTests(ctx: ProductContext, wt: worktree.WorktreeHandle, policy: PolicyConfig) {
+  if (policy.tests.setup_cmd) await wt.run('sh', ['-c', policy.tests.setup_cmd], { timeoutMs: 5 * 60 * 1000 });
   await events.append(ctx, { phase: 'build', kind: 'start', payload: { stage: 'tests' } });
   return wt.run('sh', ['-c', policy.tests.cmd], { timeoutMs: 5 * 60 * 1000 });
 }
@@ -134,7 +135,7 @@ export async function run(
     `base: ${wt.baseBranch} (${wt.baseSha || 'no commits yet'})`,
     '',
     'Implement the proposal, add or update tests, run the test command, and commit when green.',
-    `The acceptance gate is exactly: \`${policy.tests.cmd}\` run from the worktree root — it must exit 0. If the project compiles (e.g. TypeScript → dist/), build first so tests see your change. Tests must import from the worktree, never from a temp dir.`,
+    `The acceptance gate is exactly: \`${policy.tests.cmd}\` run from the worktree root — it must exit 0.${policy.tests.setup_cmd ? ` The runtime runs \`${policy.tests.setup_cmd}\` before it.` : ''} Tests must import from the worktree, never from a temp dir.`,
     'The runtime will validate your diff against policy + secret-scan AFTER you finish.',
   ].join('\n') + baselineNote;
 

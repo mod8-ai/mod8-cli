@@ -137,7 +137,7 @@ export interface PolicyConfig {
     legal_claims: 'forbidden' | 'approval-required' | 'allowed';
     pricing_claims: 'forbidden' | 'approval-required' | 'allowed';
   };
-  tests: { cmd: string; secret_scan_cmd?: string };
+  tests: { cmd: string; secret_scan_cmd?: string; setup_cmd?: string };
   cadence: {
     sense_every_minutes: number;
     ideate_every_hours: number;

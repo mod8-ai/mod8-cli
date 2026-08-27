@@ -115,6 +115,9 @@ const PolicyConfigSchema = z.object({
   tests: z.object({
     cmd: z.string().min(1),
     secret_scan_cmd: z.string().optional(),
+    /** Run once in a fresh worktree before tests (e.g. `npm run build`
+     *  for compiled projects whose tests read dist/). */
+    setup_cmd: z.string().optional(),
   }),
   cadence: z.object({
     sense_every_minutes: z.number().int().positive(),
