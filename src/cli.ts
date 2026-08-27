@@ -263,6 +263,7 @@ loop
   .description('Run one pass of the loop now (the cron-driven entry; Phase 1)')
   .option('--slug <slug>', 'product slug (default: mod8)')
   .option('--unsafe-no-lock', 'skip the advisory lock — debug only', false)
+  .option('-f, --force', 'ignore cadence gates and run every phase now', false)
   .action(async (opts: { slug?: string; unsafeNoLock?: boolean }) => {
     await loopTick(opts);
   });

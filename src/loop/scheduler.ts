@@ -25,20 +25,33 @@ export interface ScheduleDecision {
   reasons: Record<PhaseId, string>;
 }
 
+export interface ScheduleOptions {
+  /** Ignore cadence gates — run sense + the ideate pipeline now.  Set by
+   *  `mod8 loop tick --force`; how a human (or a test) makes the loop
+   *  work a day on demand. */
+  force?: boolean;
+  /** Proposals still in 'pending-build'.  When > 0 and ideate is
+   *  cadence-skipped, prioritize+build still run so the backlog drains
+   *  instead of waiting hours for the next ideate. */
+  pendingProposals?: number;
+}
+
 export function decidePhases(
   state: LoopState,
   policy: PolicyConfig,
-  now: number
+  now: number,
+  opts: ScheduleOptions = {}
 ): ScheduleDecision {
   const phases: PhaseId[] = [];
   const reasons: Partial<Record<PhaseId, string>> = {};
+  const force = opts.force === true;
 
   // Sense: cadence-gated.  Always considered.
   const senseInterval = policy.cadence.sense_every_minutes * MINUTES;
   const lastSense = state.lastRunByPhase.sense ?? 0;
-  if (now - lastSense >= senseInterval) {
+  if (force || now - lastSense >= senseInterval) {
     phases.push('sense');
-    reasons.sense = lastSense === 0
+    reasons.sense = force ? 'forced' : lastSense === 0
       ? 'first sense run for this product'
       : `${Math.floor((now - lastSense) / MINUTES)}m since last sense (interval ${policy.cadence.sense_every_minutes}m)`;
   } else {
@@ -50,9 +63,9 @@ export function decidePhases(
   // emit events so the operator can confirm cadence is firing.
   const ideateInterval = policy.cadence.ideate_every_hours * HOURS;
   const lastIdeate = state.lastRunByPhase.ideate ?? 0;
-  if (now - lastIdeate >= ideateInterval) {
+  if (force || now - lastIdeate >= ideateInterval) {
     phases.push('ideate', 'prioritize', 'build');
-    const reason = lastIdeate === 0
+    const reason = force ? 'forced' : lastIdeate === 0
       ? 'first ideate pipeline run for this product'
       : `${Math.floor((now - lastIdeate) / HOURS)}h since last ideate (interval ${policy.cadence.ideate_every_hours}h)`;
     reasons.ideate = reason;
@@ -61,6 +74,11 @@ export function decidePhases(
   } else {
     const remaining = Math.ceil((ideateInterval - (now - lastIdeate)) / HOURS);
     reasons.ideate = `skipped — ${remaining}h until next ideate pipeline`;
+    if ((opts.pendingProposals ?? 0) > 0) {
+      phases.push('prioritize', 'build');
+      reasons.prioritize = `${opts.pendingProposals} proposal(s) pending-build — draining backlog`;
+      reasons.build = 'chained after prioritize (backlog)';
+    }
   }
 
   // Measure → Learn (Phase 3+).  Fires only when a proposal is past

@@ -55,7 +55,7 @@ export interface PhaseEvent {
   /** Lifecycle marker.  start/complete bracket every real run;
    *  not-implemented is emitted by Phase 1 stubs; skipped is emitted
    *  by scheduler when a phase is gated out this tick. */
-  kind: 'start' | 'complete' | 'error' | 'skipped' | 'not-implemented' | 'budget-exhausted' | 'kill-switch';
+  kind: 'start' | 'complete' | 'error' | 'skipped' | 'not-implemented' | 'budget-exhausted' | 'kill-switch' | 'auto-commit' | 'no-diff';
   /** Free-form structured payload — phase-specific. */
   payload?: Record<string, unknown>;
   durationMs?: number;

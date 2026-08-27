@@ -45,6 +45,11 @@ export interface BuildOutput {
   failureReason?: string;
 }
 
+async function runTests(ctx: ProductContext, wt: worktree.WorktreeHandle, policy: PolicyConfig) {
+  await events.append(ctx, { phase: 'build', kind: 'start', payload: { stage: 'tests' } });
+  return wt.run('sh', ['-c', policy.tests.cmd], { timeoutMs: 5 * 60 * 1000 });
+}
+
 export async function run(
   ctx: ProductContext,
   policy: PolicyConfig,
@@ -103,6 +108,17 @@ export async function run(
     budgetRemainingUsd: policy.budget.per_proposal_usd.toFixed(2),
   });
 
+  const tools = buildInkTools({ cwd: wt.worktreePath, providerName: 'mod8-loop' });
+
+  // Baseline: is the test command already red on the base?  Agents stall
+  // for their whole step budget when the gate is failing for reasons that
+  // aren't theirs and the rules forbid touching unrelated files.  Tell them.
+  const baseline = await runTests(ctx, wt, policy);
+  await events.append(ctx, { phase: 'build', kind: 'start', payload: { stage: 'baseline', exitCode: baseline.exitCode } });
+  const baselineNote = baseline.exitCode === 0
+    ? ''
+    : `\n## Baseline\nThe test command is ALREADY failing on the base branch (exit ${baseline.exitCode}) before any change of yours. You are allowed to fix the pre-existing failure if it is in a test file — it blocks the gate. Tail:\n\`\`\`\n${(baseline.stdout + '\n' + baseline.stderr).slice(-2500)}\n\`\`\``;
+
   const userMessage = [
     '## Proposal you must implement',
     JSON.stringify({
@@ -118,10 +134,10 @@ export async function run(
     `base: ${wt.baseBranch} (${wt.baseSha || 'no commits yet'})`,
     '',
     'Implement the proposal, add or update tests, run the test command, and commit when green.',
+    `The acceptance gate is exactly: \`${policy.tests.cmd}\` run from the worktree root — it must exit 0. If the project compiles (e.g. TypeScript → dist/), build first so tests see your change. Tests must import from the worktree, never from a temp dir.`,
     'The runtime will validate your diff against policy + secret-scan AFTER you finish.',
-  ].join('\n');
+  ].join('\n') + baselineNote;
 
-  const tools = buildInkTools({ cwd: wt.worktreePath, providerName: 'mod8-loop' });
 
   const llmResult = await runLlmToolsPhase<{ text: string }>({
     ctx,
@@ -142,26 +158,64 @@ export async function run(
     return softFail(ctx, policy, proposal.id, `build agent failed: ${llmResult.reason}`);
   }
 
-  // 5. Capture diff.
+  // 5. Commit whatever the agent left uncommitted, then capture diff.
+  const autoCommitted = await wt.commitAll(`${proposal.title}\n\n${ctx.selfCommitTrailer}/${proposal.id}`);
+  if (autoCommitted) await events.append(ctx, { phase: 'build', kind: 'auto-commit', payload: { proposalId: proposal.id } });
   const diffInfo = await wt.diff();
   if (diffInfo.patch.trim().length === 0) {
+    const agentSaid = (llmResult.output?.text ?? '').slice(-1500);
+    await events.append(ctx, { phase: 'build', kind: 'no-diff', payload: { proposalId: proposal.id, agentSaid } });
     await wt.dispose('aborted');
     await updateProposalState(ctx, proposal.id, 'rejected-build');
     return softFail(ctx, policy, proposal.id, 'build produced no diff — nothing to stage');
   }
 
-  // 6. Run tests in the worktree.
-  await events.append(ctx, { phase: 'build', kind: 'start', payload: { stage: 'tests' } });
-  const testRun = await wt.run('sh', ['-c', policy.tests.cmd], { timeoutMs: 5 * 60 * 1000 });
+  // 6. Run tests in the worktree — with ONE repair cycle.  Agents rarely
+  //    pass first time; before this, a single red test threw away the
+  //    whole build.  Now the failure goes back to the agent once.
+  const MAX_REPAIRS = 1;
+  let testRun = await runTests(ctx, wt, policy);
+  let repairs = 0;
+  while (testRun.exitCode !== 0 && repairs < MAX_REPAIRS) {
+    repairs++;
+    await events.append(ctx, { phase: 'build', kind: 'start', payload: { stage: 'repair', attempt: repairs } });
+    const repairResult = await runLlmToolsPhase<{ text: string }>({
+      ctx,
+      phase: 'build',
+      policy,
+      system,
+      userMessage: [
+        userMessage,
+        '',
+        `## Tests FAILED (exit ${testRun.exitCode}) — repair attempt ${repairs}/${MAX_REPAIRS}`,
+        'Your previous changes are committed on the branch. Fix the failure below, run the test command again, and commit when green.',
+        'If the failure is in a test YOU wrote, fix or simplify the test; do not delete existing tests.',
+        '',
+        '```',
+        (testRun.stdout + '\n' + testRun.stderr).slice(-6000),
+        '```',
+      ].join('\n'),
+      tools,
+      maxSteps: 14,
+      finalize(s2) { return { text: s2.text }; },
+    });
+    if (!repairResult.ok) break;
+    await wt.commitAll(`repair: ${proposal.title}\n\n${ctx.selfCommitTrailer}/${proposal.id}`);
+    testRun = await runTests(ctx, wt, policy);
+  }
   const testsPassed = testRun.exitCode === 0;
   if (!testsPassed) {
+    await events.append(ctx, { phase: 'build', kind: 'no-diff', payload: { proposalId: proposal.id, stage: 'tests-failed', repairs, tail: testRun.stderr.slice(-1500) } });
     await wt.dispose('aborted');
     await updateProposalState(ctx, proposal.id, 'rejected-build');
     return softFail(
       ctx, policy, proposal.id,
-      `tests failed in worktree (exit ${testRun.exitCode}). stderr tail: ${testRun.stderr.slice(-1000)}`
+      `tests failed in worktree after ${repairs} repair(s) (exit ${testRun.exitCode}). stderr tail: ${testRun.stderr.slice(-1000)}`
     );
   }
+  // Diff may have grown during repair.
+  const finalDiff = await wt.diff();
+  if (finalDiff.patch.trim().length > 0) Object.assign(diffInfo, finalDiff);
 
   // 7. Secret scan on the diff.
   if (findApiKey(diffInfo.patch)) {

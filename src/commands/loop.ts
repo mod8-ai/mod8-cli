@@ -28,13 +28,14 @@ import type { PhaseEvent, PhaseId } from '../loop/types.js';
  *  wizard registers other products. */
 const DEFAULT_SLUG = 'mod8';
 
-export async function loopTick(opts: { slug?: string; unsafeNoLock?: boolean }): Promise<void> {
+export async function loopTick(opts: { slug?: string; unsafeNoLock?: boolean; force?: boolean }): Promise<void> {
   await loadAllAdapters().catch(() => { /* already loaded */ });
   const slug = opts.slug ?? DEFAULT_SLUG;
   const result = await tick({
     slug,
     repoRoot: process.cwd(),
     ...(opts.unsafeNoLock ? { unsafeNoLock: true } : {}),
+    ...(opts.force ? { force: true } : {}),
   });
 
   if (!result.ok) {

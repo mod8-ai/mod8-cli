@@ -34,13 +34,15 @@ import * as state from './state.js';
 import * as product from '../memory/product.js';
 import { loadPolicy, PolicyMissing } from './policy.js';
 import { decidePhases } from './scheduler.js';
-import { loadAllAdapters } from './adapters/registry.js';
+import * as proposalStore from './proposal.js';
+import { loadAllAdapters, list as listAdapters } from './adapters/registry.js';
+import * as feedback from '../memory/feedback.js';
 import { buildProductContext, GLOBAL_PATHS, productDirFor } from '../memory/paths.js';
 import { run as runSense } from './phases/sense.js';
 import { run as runIdeate } from './phases/ideate.js';
 import { run as runPrioritize } from './phases/prioritize.js';
 import { run as runBuild } from './phases/build.js';
-import type { LoopState, PhaseId } from './types.js';
+import type { LoopState, PhaseId, Signal, SignalBundle } from './types.js';
 
 export interface TickResult {
   ok: boolean;
@@ -62,6 +64,8 @@ export interface TickOptions {
   now?: number;
   /** Skip the advisory lock — debug only, never in production. */
   unsafeNoLock?: boolean;
+  /** Ignore cadence gates (`mod8 loop tick --force`). */
+  force?: boolean;
 }
 
 export async function tick(opts: TickOptions): Promise<TickResult> {
@@ -163,7 +167,8 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
     await audit.append(ctx, 'tick.start', { tickId: nextTickId, now });
 
     // 10. Schedule.
-    const decision = decidePhases(oldState, policy, now);
+    const pendingProposals = (await proposalStore.list(ctx)).filter((p) => p.state === 'pending-build').length;
+    const decision = decidePhases(oldState, policy, now, { force: opts.force, pendingProposals });
     await audit.append(ctx, 'tick.schedule', {
       tickId: nextTickId,
       phases: decision.phases,
@@ -217,10 +222,24 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
           break;
         }
         case 'ideate': {
-          const bundle = senseBundle ?? {
+          let bundle: SignalBundle = senseBundle ?? {
             schemaVersion: 1 as const, productSlug: ctx.slug, tickId: nextTickId,
             newSignals: [], countsBySource: {}, memoryUpdates: [],
           };
+          // --force with nothing fresh: ideate from the recent corpus instead
+          // of skipping, so a forced tick always has something to think about.
+          if (opts.force && bundle.newSignals.length === 0) {
+            const recent: Signal[] = [];
+            const counts: Record<string, number> = {};
+            for (const a of listAdapters()) {
+              if (a.kind !== 'source' && a.kind !== 'both') continue;
+              const sigs = await feedback.readAll(ctx, a.id, 20).catch(() => []);
+              if (sigs.length) { recent.push(...sigs); counts[a.id] = sigs.length; }
+            }
+            recent.sort((x: Signal, y: Signal) => y.ts - x.ts);
+            bundle = { ...bundle, newSignals: recent.slice(0, 40), countsBySource: counts };
+            await events.append(ctx, { phase: 'ideate', kind: 'start', payload: { forcedFromCorpus: bundle.newSignals.length } });
+          }
           const result = await runIdeate(ctx, policy, bundle);
           phaseOutcomes.push({
             phase, ran: true, ok: result.ok, durationMs: result.durationMs,

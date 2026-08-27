@@ -251,6 +251,7 @@ export async function runLlmToolsPhase<TOutput>(opts: RunLlmToolsOptions<TOutput
   let text = '';
   let toolCalls = 0;
   let toolErrors = 0;
+  const toolTrail: string[] = [];
   let reason: string | undefined;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -265,7 +266,13 @@ export async function runLlmToolsPhase<TOutput>(opts: RunLlmToolsOptions<TOutput
     });
     for await (const part of result.fullStream) {
       if (part.type === 'text-delta') text += (part as { text: string }).text;
-      else if (part.type === 'tool-call') toolCalls++;
+      else if (part.type === 'tool-call') {
+        toolCalls++;
+        const name = (part as { toolName?: string }).toolName ?? '?';
+        const input = (part as { input?: unknown }).input as Record<string, unknown> | undefined;
+        const arg = input && typeof input === 'object' ? String(input.path ?? input.command ?? input.pattern ?? '') : '';
+        if (toolTrail.length < 60) toolTrail.push(arg ? `${name}(${arg.slice(0, 80)})` : name);
+      }
       else if (part.type === 'tool-result') {
         const output = (part as { output?: unknown }).output;
         if (typeof output === 'string' && output.startsWith('Error:')) toolErrors++;
@@ -286,11 +293,11 @@ export async function runLlmToolsPhase<TOutput>(opts: RunLlmToolsOptions<TOutput
   await budget.record(ctx, phase, costUsd, inputTokens, outputTokens, pick.modelId);
 
   if (reason !== undefined) {
-    await events.append(ctx, { phase, kind: 'error', payload: { reason, costUsd, toolCalls, toolErrors }, durationMs, costUsd });
+    await events.append(ctx, { phase, kind: 'error', payload: { reason, costUsd, toolCalls, toolErrors, toolTrail }, durationMs, costUsd });
     await audit.append(ctx, 'phase.error', { phase, reason, durationMs });
     return { ok: false, output: null, reason, durationMs };
   }
-  await events.append(ctx, { phase, kind: 'complete', payload: { model: pick.modelId, inputTokens, outputTokens, costUsd, toolCalls, toolErrors }, durationMs, costUsd });
+  await events.append(ctx, { phase, kind: 'complete', payload: { model: pick.modelId, inputTokens, outputTokens, costUsd, toolCalls, toolErrors, toolTrail }, durationMs, costUsd });
   await audit.append(ctx, 'phase.complete', { phase, durationMs, model: pick.modelId, costUsd });
   return { ok: true, output: opts.finalize({ text, toolCalls, toolErrors }), durationMs };
 }

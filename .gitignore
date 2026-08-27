@@ -27,3 +27,4 @@ firebase-debug.log
 
 # npm artifacts
 *.tgz
+.mod8-worktrees/

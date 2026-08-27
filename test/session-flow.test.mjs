@@ -64,11 +64,12 @@ const bad = (l, e) => { fail++; console.error(`  ✗ ${l} — ${e}`); };
     ok('session persists per-message mode (last msg = work)');
   } else bad('per-message mode', `last was ${lastMode}`);
 
-  // Verify chat.tsx hardcodes mode='host' on App init
+  // Verify App defaults mode to 'host' on init (initialMode prop defaults
+  // to 'host' since the BYOK front door made the start mode injectable).
   const chatSrc = await fs.readFile('./dist/commands/chat.js', 'utf8');
-  if (chatSrc.includes("useState('host')")) {
+  if (/initialMode\s*=\s*'host'/.test(chatSrc) && chatSrc.includes('useState(initialMode)')) {
     ok('App initializes in host mode regardless of saved last-mode');
-  } else bad('host-on-resume', 'no useState(\'host\') init found');
+  } else bad('host-on-resume', 'no initialMode=host default found');
 
   // Verify message history is intact (so claude sees prior context when invoked)
   if (reloaded.messages.length === 4) {

@@ -50,6 +50,10 @@ export interface WorktreeHandle {
    *  returned; exit code via .exitCode.  Used by build phase for
    *  `npm test` etc. */
   run(cmd: string, args: string[], opts?: { timeoutMs?: number; env?: NodeJS.ProcessEnv }): Promise<{ stdout: string; stderr: string; exitCode: number; durationMs: number }>;
+  /** Stage + commit any uncommitted work in the worktree.  Returns true
+   *  if a commit was made.  Called by build before diff() so agent edits
+   *  are never lost. */
+  commitAll(message: string): Promise<boolean>;
   /** Dispose the worktree (and its branch) — called after merge,
    *  rejection, or abort.  Updates the registry. */
   dispose(status: 'merged' | 'rejected' | 'aborted'): Promise<void>;
@@ -62,11 +66,22 @@ const WORKTREE_DIR_NAME = '.mod8-worktrees';
 const GITIGNORE_LINE = `${WORKTREE_DIR_NAME}/`;
 const STALE_DAYS = 7;
 
+async function currentBranch(repoRoot: string): Promise<string | null> {
+  try {
+    const r = await execFileP('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot });
+    const b = r.stdout.trim();
+    return b && b !== 'HEAD' ? b : null;
+  } catch { return null; }
+}
+
 /** Create a new worktree for a proposal.  Refuses if a worktree
  *  already exists for this proposal id (the loop should never
  *  re-build without first aborting the prior). */
 export async function create(ctx: ProductContext, proposalId: string, opts?: { baseBranch?: string }): Promise<WorktreeHandle> {
-  const baseBranch = opts?.baseBranch ?? 'main';
+  // Default base = whatever the repo currently has checked out.  'main'
+  // was wrong on every repo that works on a feature branch: the agent
+  // built against stale code and its proposal no longer matched reality.
+  const baseBranch = opts?.baseBranch ?? (await currentBranch(ctx.repoRoot)) ?? 'main';
   await ensureGitignoreEntry(ctx.repoRoot);
 
   const worktreePath = resolve(ctx.repoRoot, WORKTREE_DIR_NAME, proposalId);
@@ -161,6 +176,18 @@ function buildHandle(ctx: ProductContext, record: WorktreeRecord): WorktreeHandl
         await execFileP('git', ['branch', '-D', record.branch], { cwd: ctx.repoRoot });
       } catch { /* tolerate — branch may have been pushed/merged already */ }
       await appendRecord(ctx, { ...record, status });
+    },
+    async commitAll(message) {
+      // The build agent is told to commit, but often leaves edits in the
+      // working tree.  diff() only sees commits, so uncommitted work used
+      // to be thrown away as "no diff".  Stage + commit anything left.
+      try {
+        const st = await execFileP('git', ['status', '--porcelain'], { cwd: record.worktreePath });
+        if (st.stdout.trim().length === 0) return false;
+        await execFileP('git', ['add', '-A'], { cwd: record.worktreePath });
+        await execFileP('git', ['-c', 'user.name=mod8-loop', '-c', 'user.email=loop@mod8.ai', 'commit', '-q', '-m', message], { cwd: record.worktreePath });
+        return true;
+      } catch { return false; }
     },
     async diff() {
       // git diff baseSha..HEAD inside worktree.
