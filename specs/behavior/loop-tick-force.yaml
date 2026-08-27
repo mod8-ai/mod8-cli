@@ -1,0 +1,41 @@
+name: behavior — mod8 loop tick --force + approvals-cli (mock model)
+description: |
+  A forced tick must run sense → ideate → prioritize → build on demand
+  regardless of cadence, and the non-interactive approvals CLI must work
+  without a TTY.  MOD8_MOCK=1 routes every phase to the mock model so the
+  spec is deterministic and free.  Product lives under MOD8_CONFIG_DIR.
+
+tests:
+  - name: connect + product.md + forced tick runs every phase without error
+    shell: |
+      set -e
+      cd $MOD8_CONFIG_DIR && git init -q demo && cd demo && git commit -q --allow-empty -m init
+      mod8 connect add demo >/dev/null
+      P=$MOD8_CONFIG_DIR/products/demo
+      printf '# demo\n\n## What is this product?\nA demo.\n\n## Who is the user?\nTesters.\n\n## Non-goals\nNone.\n\n## Voice + brand rules\nPlain.\n\n## The one metric\nTicks.\n' > $P/product.md
+      MOD8_MOCK=1 mod8 loop tick --slug demo --force
+      MOD8_MOCK=1 mod8 loop tick --slug demo
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - "mod8 loop tick 1 — demo"
+        - "✓ sense"
+        - "✓ ideate"
+        - "✓ prioritize"
+        - "✓ build"
+        - "mod8 loop tick 2 — demo"
+        - "skipped —"
+
+  - name: approvals-cli list works without a TTY and rejects a bad verdict
+    shell: |
+      set -e
+      cd $MOD8_CONFIG_DIR && git init -q demo2 && cd demo2 && git commit -q --allow-empty -m init
+      mod8 connect add demo2 >/dev/null
+      mod8 approvals-cli list --slug demo2
+      mod8 approvals-cli decide apr_nope maybe --slug demo2 || echo "exit=$?"
+    expect:
+      stdout_contains:
+        - "no pending approvals"
+        - "exit=2"
+      stderr_contains:
+        - "verdict must be 'approve' or 'reject'"
