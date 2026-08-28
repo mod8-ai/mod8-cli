@@ -190,7 +190,30 @@ export async function runStructuredPhase<TOutput>(
     outputTokens = r.usage.outputTokens ?? 0;
     costUsd = estimateActualCost(pick.modelId, inputTokens, outputTokens);
   } catch (err) {
-    reason = err instanceof Error ? err.message : String(err);
+    const first = err instanceof Error ? err.message : String(err);
+    // ONE repair pass.  Providers without native JSON-schema output
+    // (DeepSeek, most OpenAI-compatible endpoints) sometimes emit an
+    // object that misses the schema; ask once more with the error quoted.
+    if (/did not match schema|No object generated/i.test(first)) {
+      try {
+        const r2 = await generateObject({
+          model: pick.connection.model,
+          system: opts.system,
+          prompt: `${opts.userMessage}\n\nYour previous answer was rejected: ${first.slice(0, 600)}\nReturn ONLY a JSON object that matches the schema exactly.`,
+          schema: opts.schema,
+          maxOutputTokens: opts.maxOutputTokens ?? 4000,
+        });
+        output = r2.object as TOutput;
+        inputTokens = r2.usage.inputTokens ?? 0;
+        outputTokens = r2.usage.outputTokens ?? 0;
+        costUsd = estimateActualCost(pick.modelId, inputTokens, outputTokens);
+        await events.append(ctx, { phase, kind: 'start', payload: { mode: 'structured-repair', firstError: first.slice(0, 200) } });
+      } catch (err2) {
+        reason = err2 instanceof Error ? err2.message : String(err2);
+      }
+    } else {
+      reason = first;
+    }
   }
 
   const durationMs = Date.now() - start;
