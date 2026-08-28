@@ -27,7 +27,7 @@ import { classifyError } from '../util/errors.js';
 const execFileP = promisify(execFile);
 const HOST_PROVIDER_ID = 'anthropic';
 
-export interface StandupOptions { days?: number; project?: string; raw?: boolean }
+export interface StandupOptions { days?: number; project?: string; raw?: boolean; provider?: string }
 
 interface CompanyDigest {
   label: string;
@@ -150,15 +150,23 @@ export async function standupCommand(opts: StandupOptions): Promise<void> {
   if (opts.raw) { process.stdout.write(renderRaw(d)); return; }
 
   // Same rule as the REPL front door: host voice is Anthropic, but any key works.
+  // Precedence: --provider / MOD8_STANDUP_PROVIDER → local Anthropic key →
+  // any local key → proxy.  YOUR OWN KEY WINS over the proxy (same rule as
+  // buildProviderModel); the old order used the proxy whenever you were
+  // logged in, so a dead proxy account took standup down even with a
+  // working DeepSeek key on disk.
   const auth = await readAuth();
+  const explicit = opts.provider ?? process.env.MOD8_STANDUP_PROVIDER?.trim();
   let providerId = HOST_PROVIDER_ID;
-  if (!auth && !(await resolveConfigured(HOST_PROVIDER_ID))) {
+  if (explicit) {
+    providerId = explicit;
+  } else if (!(await resolveConfigured(HOST_PROVIDER_ID))) {
     const ids = await configuredProviderIds();
-    if (ids.length === 0) {
+    if (ids.length > 0) providerId = ids[0]!;
+    else if (!auth) {
       console.error(chalk.red('mod8: ') + 'no provider keys configured — add one with `mod8 keys set <provider>`, or run `mod8 standup --raw`.');
       process.exit(1);
     }
-    providerId = ids[0]!;
   }
 
   process.stderr.write(chalk.dim(`standup: ${d.companies.length} companies · ${d.companies.reduce((n, c) => n + c.memories.length, 0)} memories · last ${d.days} days · via ${providerId}\n\n`));

@@ -210,9 +210,10 @@ program
   .option('-d, --days <n>', 'window in days', '7')
   .option('-p, --project <name>', 'only companies matching this label')
   .option('--raw', 'print the deterministic digest without calling a model')
-  .action(async (o: { days: string; project?: string; raw?: boolean }) => {
+  .option('--provider <id>', 'provider to brief with (anthropic | deepseek | groq | …); default: local Anthropic key, else any local key, else proxy')
+  .action(async (o: { days: string; project?: string; raw?: boolean; provider?: string }) => {
     const { standupCommand } = await import('./commands/standup.js');
-    await standupCommand({ days: Number(o.days) || 7, project: o.project, raw: o.raw });
+    await standupCommand({ days: Number(o.days) || 7, project: o.project, raw: o.raw, provider: o.provider });
   });
 
 program
