@@ -283,8 +283,10 @@ export async function runLlmToolsPhase<TOutput>(opts: RunLlmToolsOptions<TOutput
 
   // The model call had no timeout: tick #9 hung 17 minutes on a stream that
   // never returned a byte.  Idle = no stream event for IDLE_MS; hard = total.
-  const IDLE_MS = 120_000;
-  const HARD_MS = opts.hardTimeoutMs ?? 12 * 60_000;
+  // Slower providers (DeepSeek ≈30s/tool call, non-streamed tool args) need
+  // more room: MOD8_LOOP_IDLE_MS / MOD8_LOOP_HARD_MS override the defaults.
+  const IDLE_MS = Number(process.env.MOD8_LOOP_IDLE_MS) || 120_000;
+  const HARD_MS = opts.hardTimeoutMs ?? (Number(process.env.MOD8_LOOP_HARD_MS) || 12 * 60_000);
   const abort = new AbortController();
   let idleTimer: NodeJS.Timeout | undefined;
   const armIdle = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => { reason = `phase idle timeout (${IDLE_MS / 1000}s without a stream event)`; abort.abort(); }, IDLE_MS); };
