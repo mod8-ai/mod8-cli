@@ -59,7 +59,10 @@ export async function run(
       scored.sort((a, b) => b.score - a.score);
 
       const top = scored[0]!;
-      const picked = top.score >= 1.0 ? top.proposal : null;
+      // Rank, don't threshold (plan 5.4): the human [a]pprove is the real
+      // gate.  A fixed 1.0 cut-off could never be crossed by a proposal kind
+      // with no priors (confidence 0.4), so the loop never bootstrapped.
+      const picked = top.score > 0 ? top.proposal : null;
 
       // Mark non-picked proposals as rejected-priority.
       for (const s of scored) {
