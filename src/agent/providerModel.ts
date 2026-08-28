@@ -12,6 +12,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { readAuth, effectiveProxyUrl } from '../storage/auth.js';
 import { resolveConfigured } from '../storage/providers.js';
+import { KNOWN_PROVIDERS, templateById } from '../providers/registry.js';
 
 /** Optional metadata the CLI tags onto each proxy request via headers
  *  (X-Mod8-Project-Id / -Project-Name / -Topic).  The mod8.ai proxy
@@ -26,7 +27,12 @@ export interface ProxyAttribution {
   topic?: string;
 }
 
-export type ProviderKind = 'anthropic' | 'openai' | 'google' | 'deepseek';
+/** First-class SDK kinds plus every OpenAI-compatible provider in the
+ *  registry (openrouter, groq, xai, mistral, together).  The Harness used to
+ *  know only the first four, so a BYOK user with a Groq key could chat but
+ *  could not run a tick. */
+export type ProviderKind = 'anthropic' | 'openai' | 'google' | 'deepseek' | 'openrouter' | 'groq' | 'xai' | 'mistral' | 'together';
+const OPENAI_COMPAT_KINDS = new Set<ProviderKind>(['openrouter', 'groq', 'xai', 'mistral', 'together']);
 
 export interface ResolvedModel {
   kind: ProviderKind;
@@ -52,15 +58,33 @@ export function resolveModel(input: string): ResolvedModel {
   if (lower === 'gemini') return { kind: 'google', modelId: 'gemini-2.5-flash', label: 'Gemini' };
   if (lower === 'deepseek') return { kind: 'deepseek', modelId: 'deepseek-chat', label: 'DeepSeek' };
 
+  // Bare provider id → that provider's default model (groq, mistral, xai, together, openrouter…).
+  const bare = templateById(lower);
+  if (bare) return { kind: bare.id as ProviderKind, modelId: bare.defaultModel, label: bare.name };
+
+  // Explicit "provider/model" always wins: groq/llama-3.3-70b-versatile, openrouter/anthropic/claude-3.5-sonnet.
+  const slash = id.indexOf('/');
+  if (slash > 0) {
+    const head = lower.slice(0, slash);
+    const tpl = templateById(head);
+    if (tpl) return { kind: tpl.id as ProviderKind, modelId: id.slice(slash + 1), label: tpl.name };
+  }
+
   if (lower.startsWith('claude-')) return { kind: 'anthropic', modelId: id, label: 'Claude' };
   if (lower.startsWith('gpt-') || lower.startsWith('o1') || lower.startsWith('o3') || lower.startsWith('o4')) {
     return { kind: 'openai', modelId: id, label: 'GPT' };
   }
   if (lower.startsWith('gemini-')) return { kind: 'google', modelId: id, label: 'Gemini' };
   if (lower.startsWith('deepseek-')) return { kind: 'deepseek', modelId: id, label: 'DeepSeek' };
+  if (lower.startsWith('grok-')) return { kind: 'xai', modelId: id, label: 'xAI (Grok)' };
+  if (/^(mistral|mixtral|codestral|ministral)/.test(lower)) return { kind: 'mistral', modelId: id, label: 'Mistral' };
+  if (lower.startsWith('llama-')) return { kind: 'groq', modelId: id, label: 'Groq' };
+  // "vendor/model" with an unknown vendor is the OpenRouter catalogue shape.
+  if (slash > 0) return { kind: 'openrouter', modelId: id, label: 'OpenRouter' };
 
   throw new Error(
-    `Unknown model "${id}".  Try: claude-sonnet-4-6, gpt-4o, gemini-2.5-flash, deepseek-chat (or short aliases: claude, gpt, gemini, deepseek).`
+    `Unknown model "${id}".  Try a model id (claude-sonnet-4-6, gpt-4o, gemini-2.5-flash, deepseek-chat, grok-2-latest), ` +
+    `a provider (${KNOWN_PROVIDERS.map((t) => t.id).join(', ')}) for its default, or provider/model (groq/llama-3.3-70b-versatile).`
   );
 }
 
@@ -84,7 +108,7 @@ export async function buildProviderModel(
     if (localEntry?.apiKey) return buildLocalConnection(resolved);
   }
   const auth = await readAuth();
-  if (auth) {
+  if (auth && !OPENAI_COMPAT_KINDS.has(resolved.kind)) {
     const proxyUrl = effectiveProxyUrl(auth);
     return buildProxyConnection(resolved, proxyUrl, auth.mod8Key, attribution);
   }
@@ -144,6 +168,8 @@ function buildProxyConnection(
       });
       return { model: deepseek(resolved.modelId), source: 'proxy' };
     }
+    default:
+      throw new Error(`${resolved.kind}: not available through the mod8 proxy — run \`mod8 keys set ${resolved.kind}\` to use your own key.`);
   }
 }
 
@@ -174,6 +200,16 @@ async function buildLocalConnection(resolved: ResolvedModel): Promise<ProviderCo
         apiKey: entry.apiKey,
       });
       return { model: deepseek(resolved.modelId), source: 'local' };
+    }
+    default: {
+      const tpl = templateById(resolved.kind);
+      if (!tpl?.baseUrl) throw new Error(`${resolved.kind}: no base URL known for this provider`);
+      const compat = createOpenAICompatible({
+        name: resolved.kind,
+        baseURL: entry.baseUrl ?? tpl.baseUrl,
+        apiKey: entry.apiKey,
+      });
+      return { model: compat(resolved.modelId), source: 'local' };
     }
   }
 }

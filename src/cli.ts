@@ -504,6 +504,27 @@ program
     await devResolve(input);
   });
 
+// Dev endpoint: show which provider/model the Harness would use for a
+// phase after env (MOD8_LOOP_MODEL*) and policy.yaml `models:` overrides.
+// Resolution only — never opens a connection, never needs a key.
+program
+  .command('dev:loop-model <phase>')
+  .option('--slug <slug>', 'product slug whose policy.yaml models: to apply')
+  .description('print the resolved Harness model for a loop phase (debug only)')
+  .action(async (phase: string, opts: { slug?: string }) => {
+    const { resolveModel } = await import('./agent/providerModel.js');
+    const { resolvePhaseModelId, setPolicyModels } = await import('./loop/modelPicker.js');
+    if (opts.slug) {
+      const { loadPolicy } = await import('./loop/policy.js');
+      const { buildProductContext } = await import('./memory/paths.js');
+      const policy = await loadPolicy(buildProductContext(opts.slug, process.cwd(), 0));
+      setPolicyModels(policy.models);
+    }
+    const id = resolvePhaseModelId(phase as never);
+    const r = resolveModel(id);
+    process.stdout.write(`${phase} → ${r.kind} ${r.modelId}\n`);
+  });
+
 // Dev endpoint: derive the project identity that mod8 would send with
 // each run-tracking call.  Used by behavioral specs to lock in cwd
 // → projectId, stack detection, and .mod8/project.yaml override handling.

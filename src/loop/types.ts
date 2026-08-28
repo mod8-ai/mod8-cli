@@ -144,6 +144,8 @@ export interface PolicyConfig {
     measure_wait_hours: number;
   };
   concurrent_worktrees: number;
+  /** Per-phase model override from policy.yaml `models:` (phase → model|provider|provider/model; `default` for the rest). */
+  models?: Record<string, string>;
   kill_switch_file?: string;
   /** Phase 4 — name of a parent policy under products/<parent>/ to
    *  inherit from.  Phase 1 ignores this. */

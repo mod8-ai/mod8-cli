@@ -27,6 +27,18 @@ const DEFAULT_BY_PHASE: Record<PhaseId, string> = {
   learn: 'claude-haiku-4-5',
 };
 
+/** Set once per tick from policy.yaml `models:`; cleared by the caller. */
+let policyModels: Record<string, string> | undefined;
+export function setPolicyModels(m: Record<string, string> | undefined): void { policyModels = m; }
+
+/** Precedence: MOD8_LOOP_MODEL_<PHASE> > MOD8_LOOP_MODEL > policy models.<phase> > policy models.default > built-in. */
+export function resolvePhaseModelId(phase: PhaseId): string {
+  const envPhase = process.env[`MOD8_LOOP_MODEL_${phase.toUpperCase()}`]?.trim();
+  const envAll = process.env.MOD8_LOOP_MODEL?.trim();
+  const fromPolicy = policyModels?.[phase] ?? policyModels?.default;
+  return envPhase || envAll || fromPolicy || DEFAULT_BY_PHASE[phase];
+}
+
 export interface PhaseModelPick {
   modelId: string;
   label: string;
@@ -50,9 +62,7 @@ export async function pickModelFor(phase: PhaseId, override?: string): Promise<P
   }
   // MOD8_LOOP_MODEL=<model> routes every phase to one model (e.g. deepseek-chat
   // when the Anthropic proxy is out of credits); MOD8_LOOP_MODEL_<PHASE> wins per phase.
-  const envPhase = process.env[`MOD8_LOOP_MODEL_${phase.toUpperCase()}`]?.trim();
-  const envAll = process.env.MOD8_LOOP_MODEL?.trim();
-  const id = override ?? (envPhase || envAll || DEFAULT_BY_PHASE[phase]);
+  const id = override ?? resolvePhaseModelId(phase);
   try {
     const resolved = resolveModel(id);
     const conn = await buildProviderModel(resolved);

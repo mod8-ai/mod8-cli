@@ -1,0 +1,61 @@
+name: behavior — the Harness can run on any configured provider, not just the four SDK kinds
+description: |
+  Bug confirmation (2026-08-28): `mod8 keys list` shows nine providers and the
+  chat REPL uses all of them, but the loop's resolver (src/agent/providerModel.ts)
+  knew only anthropic/openai/google/deepseek.  A BYOK user with a Groq or
+  Mistral key could chat but never tick — and the Anthropic proxy going
+  negative (-$0.40) took the whole Harness down with it.
+
+  Contract locked in here (resolution only — no key, no network):
+    · bare provider id            → that provider's default model
+    · provider/model              → explicit, always wins
+    · model-id prefixes           → grok- → xai, mistral*/mixtral → mistral, llama- → groq
+    · unknown vendor/model        → openrouter catalogue shape
+    · MOD8_LOOP_MODEL_<PHASE> > MOD8_LOOP_MODEL > policy models.<phase> > models.default > built-in
+
+tests:
+  - name: env override routes every phase; per-phase env wins over the global one
+    shell: |
+      MOD8_LOOP_MODEL=groq mod8 dev:loop-model build
+      MOD8_LOOP_MODEL=groq MOD8_LOOP_MODEL_IDEATE=mistral-large-latest mod8 dev:loop-model ideate
+      MOD8_LOOP_MODEL=openrouter/anthropic/claude-3.5-sonnet mod8 dev:loop-model sense
+      MOD8_LOOP_MODEL=grok-2-latest mod8 dev:loop-model act
+      MOD8_LOOP_MODEL=meta-llama/Llama-3.3-70B mod8 dev:loop-model learn
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - "build → groq llama-3.3-70b-versatile"
+        - "ideate → mistral mistral-large-latest"
+        - "sense → openrouter anthropic/claude-3.5-sonnet"
+        - "act → xai grok-2-latest"
+        - "learn → openrouter meta-llama/Llama-3.3-70B"
+
+  - name: "policy.yaml models sets a default and a per-phase model; built-in applies when nothing is set"
+    shell: |
+      set -e
+      cd $MOD8_CONFIG_DIR && git init -q anyprov && cd anyprov && git commit -q --allow-empty -m init
+      mod8 connect add anyprov >/dev/null
+      P=$MOD8_CONFIG_DIR/products/anyprov
+      printf 'models:\n  default: deepseek-chat\n  ideate: together\n' >> $P/policy.yaml
+      mod8 dev:loop-model build --slug anyprov
+      mod8 dev:loop-model ideate --slug anyprov
+      MOD8_LOOP_MODEL=groq mod8 dev:loop-model ideate --slug anyprov
+      mod8 dev:loop-model build
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - "build → deepseek deepseek-chat"
+        - "ideate → together meta-llama/Llama-3.3-70B-Instruct-Turbo"
+        - "ideate → groq llama-3.3-70b-versatile"
+        - "build → anthropic claude-sonnet-4-6"
+
+  - name: an unknown model id fails loudly and lists every provider
+    shell: |
+      MOD8_LOOP_MODEL=bogus mod8 dev:loop-model build || echo "exit=$?"
+    expect:
+      stdout_contains:
+        - "exit=1"
+      stderr_contains:
+        - 'Unknown model "bogus"'
+        - "groq"
+        - "together"

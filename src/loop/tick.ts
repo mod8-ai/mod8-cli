@@ -33,6 +33,7 @@ import * as audit from './audit.js';
 import * as state from './state.js';
 import * as product from '../memory/product.js';
 import { loadPolicy, PolicyMissing } from './policy.js';
+import { setPolicyModels } from './modelPicker.js';
 import { decidePhases } from './scheduler.js';
 import * as proposalStore from './proposal.js';
 import { loadAllAdapters, list as listAdapters } from './adapters/registry.js';
@@ -120,6 +121,7 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
     let policy;
     try {
       policy = await loadPolicy(provisionalCtx);
+      setPolicyModels(policy.models);
     } catch (err) {
       if (err instanceof PolicyMissing) {
         return { ok: false, reason: err.message, tickId: 0, phaseOutcomes: [] };

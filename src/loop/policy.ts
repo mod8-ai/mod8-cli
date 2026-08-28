@@ -125,6 +125,10 @@ const PolicyConfigSchema = z.object({
     measure_wait_hours: z.number().int().positive(),
   }),
   concurrent_worktrees: z.number().int().positive(),
+  /** Per-phase model override (sense|ideate|prioritize|build|act|measure|learn
+   *  → model id, provider, or provider/model).  `default` applies to every
+   *  phase not listed.  Env MOD8_LOOP_MODEL* still wins over this. */
+  models: z.record(z.string(), z.string()).optional(),
   kill_switch_file: z.string().optional(),
   inherit_from: z.string().optional(),
   paused_until: z.string().optional(),
@@ -228,6 +232,7 @@ function mergeDefaults(raw: unknown): Record<string, unknown> {
     tests: { ...DEFAULTS.tests, ...(obj.tests as object | undefined) },
     cadence: { ...DEFAULTS.cadence, ...(obj.cadence as object | undefined) },
     concurrent_worktrees: obj.concurrent_worktrees ?? DEFAULTS.concurrent_worktrees,
+    models: obj.models,
     kill_switch_file: obj.kill_switch_file,
     inherit_from: obj.inherit_from,
     // YAML auto-parses ISO date literals into Date objects; coerce so
