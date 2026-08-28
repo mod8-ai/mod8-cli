@@ -23,6 +23,7 @@ First product it operates on is mod8 itself. The same layer can be pointed at an
 11. [Storage layout](#storage-layout)
 12. [Connecting other products](#connecting-other-products)
 13. [Internals — for contributors](#internals--for-contributors)
+14. [Environment variable overrides](#environment-variable-overrides)
 
 ---
 
@@ -507,6 +508,50 @@ All three return a `PhaseResult<TOutput>` — they never throw past their bounda
 `MOD8_MOCK=1` short-circuits the model picker — `runStructuredPhase` returns `null` output, `runLlmToolsPhase` runs the body without a real call. The loop completes a full tick (sense → ideate → prioritize → build) without burning tokens or hitting any external API. Use this for CI and for local smoke testing.
 
 For real-LLM tests, fund a provider (Anthropic / OpenAI / Gemini / DeepSeek), run `mod8 keys set <id> <key>` (BYOK) or `mod8 login` (proxy), and `mod8 loop tick`. Keep autonomy at L1 until you trust what the loop proposes.
+
+---
+
+## Environment variable overrides
+
+Everything in `policy.yaml` is the recommended mechanism, but a few `MOD8_*` env variables override runtime behavior without touching config. They are load-bearing for operators running custom harnesses, so they are documented here as the source of truth.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MOD8_CONFIG_DIR` | `~/.config/mod8` | Override the config root (all product state, policy, memory). |
+| `MOD8_LOOP_MODEL` | per-phase default | Routes **every** LLM-using phase to one model (e.g. `deepseek-chat` when the Anthropic proxy is out of credits). |
+| `MOD8_LOOP_MODEL_<PHASE>` | — | Per-phase model override. **Wins over `MOD8_LOOP_MODEL`.** `<PHASE>` is uppercase, e.g. `MOD8_LOOP_MODEL_IDEATE`. |
+| `MOD8_LOOP_IDLE_MS` | `120000` | Build-phase idle timeout in ms: max time without a stream event before the loop aborts. Raise for slow providers (DeepSeek ≈30s per tool call). |
+| `MOD8_LOOP_HARD_MS` | `720000` (12 min) | Build-phase hard wall-clock cap in ms for the whole tool loop, regardless of per-step activity. |
+| `MOD8_MOCK` | `1` | Short-circuits the model picker to a mock — runs a full tick without tokens or external APIs. Used by CI and smoke tests. |
+| `MOD8_LOOP_KILL` | — | Equivalent to the `STOP` file: setting it to `1` triggers the kill switch at every phase entry and adapter sink call. |
+
+### Examples
+
+```bash
+# Point a custom harness at a scratch config tree (don't touch the real one)
+export MOD8_CONFIG_DIR=$HOME/.config/mod8-test
+mod8 loop tick --slug staging
+
+# Force every phase onto cheap DeepSeek during a credit outage
+MOD8_LOOP_MODEL=deepseek-chat mod8 loop start --foreground
+
+# Pin just the ideate phase to a strong reasoner
+MOD8_LOOP_MODEL_IDEATE=claude-sonnet-4-6 mod8 loop tick
+
+# Give the build phase more time on a slow provider
+MOD8_LOOP_IDLE_MS=300000 MOD8_LOOP_HARD_MS=900000 mod8 loop tick
+
+# CI smoke test — full tick, no LLM, no tokens, no network
+MOD8_MOCK=1 npm test
+```
+
+When both `MOD8_MOCK=1` and a real provider are configured, mock wins — the loop never burns tokens in test mode. `MOD8_MOCK` takes precedence over every other model override.
+
+These variables are read live from `process.env` at each phase — setting them between ticks takes effect on the next phase entry. No restart of the daemon is required, but any *currently running* phase will finish with the values it started with.
+
+### Worktree tests
+
+The build phase creates each patch in an isolated `git worktree` at `<repo-root>/.mod8-worktrees/<proposal-id>/`. The acceptance gate for any proposal is `npm test` run from that worktree's root (the runtime runs `npm run build` first); tests must import from the worktree, never from a temp dir. Passing tests + a clean secret scan are mandatory before an item can be staged for approval. See [Safety](#safety--what-cannot-happen-without-your-approval) for the full rule set.
 
 ---
 
