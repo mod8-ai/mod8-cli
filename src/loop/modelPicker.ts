@@ -48,7 +48,11 @@ export async function pickModelFor(phase: PhaseId, override?: string): Promise<P
       connection: { model: null as unknown as ProviderConnection['model'], source: 'local' },
     };
   }
-  const id = override ?? DEFAULT_BY_PHASE[phase];
+  // MOD8_LOOP_MODEL=<model> routes every phase to one model (e.g. deepseek-chat
+  // when the Anthropic proxy is out of credits); MOD8_LOOP_MODEL_<PHASE> wins per phase.
+  const envPhase = process.env[`MOD8_LOOP_MODEL_${phase.toUpperCase()}`]?.trim();
+  const envAll = process.env.MOD8_LOOP_MODEL?.trim();
+  const id = override ?? (envPhase || envAll || DEFAULT_BY_PHASE[phase]);
   try {
     const resolved = resolveModel(id);
     const conn = await buildProviderModel(resolved);
