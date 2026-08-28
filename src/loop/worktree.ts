@@ -104,6 +104,15 @@ export async function create(ctx: ProductContext, proposalId: string, opts?: { b
   const nm = resolve(ctx.repoRoot, 'node_modules');
   if (existsSync(nm) && !existsSync(resolve(worktreePath, 'node_modules'))) {
     try { await fs.symlink(nm, resolve(worktreePath, 'node_modules'), 'dir'); } catch { /* tolerate */ }
+    // The repo's .gitignore usually covers node_modules, but if it doesn't the
+    // symlink gets swept into the agent's auto-commit (tick #15 shipped a
+    // 'node_modules -> /abs/path' link).  Exclude it in the worktree only.
+    try {
+      const { stdout } = await execFileP('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd: worktreePath });
+      const excl = resolve(worktreePath, stdout.trim());
+      await fs.mkdir(dirname(excl), { recursive: true });
+      await fs.appendFile(excl, '\nnode_modules\n');
+    } catch { /* tolerate */ }
   }
 
   const record: WorktreeRecord = {
