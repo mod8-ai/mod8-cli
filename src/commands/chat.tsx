@@ -91,6 +91,10 @@ import {
   isDiagnoseCommand,
   isBalanceCommand,
   isApprovalsCommand,
+  approvalsSlugOf,
+  isProjectsCommand,
+  parseDecideCommand,
+  parseRuleCommand,
   isHaltCommand,
   parseTopupCommand,
   parsePreviewCommand,
@@ -1454,7 +1458,11 @@ export function App({
           '  /topup [<amount>]      — buy mod8 credits via Stripe (default $50)\n' +
           '  /why                   — recent routing decisions + why mod8 picked them\n' +
           '  /diagnose              — versions, OS, auth status, last crashes (for support)\n' +
-          '  /approvals             — mod8 self-improvement loop: review pending changes\n' +
+          '  /projects              — your connected projects: last tick, cards waiting for you\n' +
+          '  /approvals [<slug>]    — review pending cards for a project (default mod8)\n' +
+          '  /approve <apr_id>      — approve a card (merges / publishes via the act phase)\n' +
+          '  /reject <apr_id>       — reject a card\n' +
+          '  /rule <slug>: <text>   — add a plain-English rule to that project\'s charter\n' +
           '  /halt                  — freeze the self-improvement loop (writes STOP file)\n' +
           '  /preview [<script>]    — auto-launch the project\'s dev server + open the browser\n' +
           '  /clear                 — wipe transcript + ledger + kill preview servers\n' +
@@ -1536,10 +1544,33 @@ export function App({
       return;
     }
 
+    if (isProjectsCommand(value)) {
+      const { readCompanyBrain, renderProjects } = await import('../company/brain.js');
+      append({ kind: 'info', text: renderProjects(await readCompanyBrain()).trimEnd() });
+      return;
+    }
+
+    const decideCmd = parseDecideCommand(value);
+    if (decideCmd) {
+      const { decideCard } = await import('../company/brain.js');
+      append({ kind: 'info', text: `${decideCmd.verdict === 'approve' ? 'approving' : 'rejecting'} ${decideCmd.id}…` });
+      const r = await decideCard(decideCmd.id, decideCmd.verdict);
+      append({ kind: r.ok ? 'info' : 'error', text: r.message });
+      return;
+    }
+
+    const ruleCmd = parseRuleCommand(value);
+    if (ruleCmd) {
+      const { addCharterRule } = await import('../company/brain.js');
+      const r = await addCharterRule(ruleCmd.slug, ruleCmd.rule);
+      append({ kind: r.ok ? 'info' : 'error', text: r.message });
+      return;
+    }
+
     if (isApprovalsCommand(value)) {
       try {
         const { approvalsCommand } = await import('../approval/command.js');
-        await approvalsCommand({ slug: 'mod8' });
+        await approvalsCommand({ slug: approvalsSlugOf(value) ?? 'mod8' });
         append({ kind: 'info', text: 'closed approvals panel.' });
       } catch (err) {
         append({ kind: 'error', text: `/approvals failed: ${err instanceof Error ? err.message : String(err)}` });
@@ -1928,6 +1959,14 @@ export function App({
         })
       : buildWorkSystem(workSpeakerNow.name);
 
+    // Company brain: charters + cards waiting + tick state for every
+    // connected project, re-read each turn (approvals change between turns).
+    // Without this the REPL could talk about the cwd but not the company.
+    try {
+      const { readCompanyBrain, buildCompanyBlock } = await import('../company/brain.js');
+      system += buildCompanyBlock(await readCompanyBrain());
+    } catch { /* brain unavailable → plain system prompt */ }
+
     // Append the session write-ledger summary to BOTH host and work
     // system prompts.  Work-mode uses it to avoid rewrite loops; host-mode
     // uses it to answer "where are we?" with evidence instead of
@@ -2171,6 +2210,28 @@ export function App({
         append({ kind: 'error', text: explained.short });
         if (explained.long) append({ kind: 'info', text: explained.long });
         persist();
+
+        // Host-mode billing failure → your own key wins.  The host voice
+        // rides the proxy's Anthropic account; when THAT runs dry ("credit
+        // balance too low") a user with a working local key was stuck
+        // staring at the same error every turn.  Hand off to the best
+        // local provider once, loudly, and let them re-send.
+        if (currentMode === 'host' && explained.kind === 'no-credit') {
+          const localIds: string[] = [];
+          for (const id of await configuredProviderIds()) {
+            if (id !== HOST_PROVIDER_ID && (await resolveConfigured(id))) localIds.push(id);
+          }
+          const pick = SDK_PROVIDER_IDS.find((id) => localIds.includes(id)) ?? localIds[0];
+          if (pick) {
+            append({
+              kind: 'info',
+              text:
+                `→ mod8 host is out of credit on the proxy. Switched to ${pick} on your own key — ` +
+                're-send your last message. (Top up at https://mod8.ai/credits or `mod8 topup` to get the host back.)',
+            });
+            await switchToWorkProvider(pick, pick);
+          }
+        }
 
         // Work-mode-only: track consecutive failures, advise user, and
         // auto-fallback to host after AUTO_FALLBACK_THRESHOLD errors so the

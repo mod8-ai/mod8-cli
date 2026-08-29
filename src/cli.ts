@@ -217,6 +217,34 @@ program
   });
 
 program
+  .command('projects')
+  .description('Your connected projects: last tick, spend, cards waiting for you (same as /projects in the REPL)')
+  .action(async () => {
+    const { readCompanyBrain, renderProjects } = await import('./company/brain.js');
+    process.stdout.write(renderProjects(await readCompanyBrain()));
+  });
+
+program
+  .command('rule <slug> <text...>')
+  .description("Add a plain-English rule to a project's charter Non-goals (same as /rule in the REPL)")
+  .action(async (slug: string, words: string[]) => {
+    const { addCharterRule } = await import('./company/brain.js');
+    const r = await addCharterRule(slug, words.join(' '));
+    process.stdout.write(r.message + '\n');
+    if (!r.ok) process.exit(1);
+  });
+
+// Dev endpoint: print the company block appended to every chat turn's
+// system prompt, so specs can assert the REPL is briefed without a model.
+program
+  .command('dev:company-brain')
+  .description('print the company-brain system block (debug only)')
+  .action(async () => {
+    const { readCompanyBrain, buildCompanyBlock } = await import('./company/brain.js');
+    process.stdout.write(buildCompanyBlock(await readCompanyBrain()).trimStart() + '\n');
+  });
+
+program
   .command('verify')
   .description("Run mod8's self-verification spec suite (specs/*.yaml)")
   .action(async () => {

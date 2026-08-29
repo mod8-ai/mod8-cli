@@ -1,0 +1,33 @@
+name: company brain — the REPL answers about the user's projects from the charters and cards
+description: |
+  Real model turn against the real Ink REPL.  With projects connected under
+  ~/.config/mod8/products/, asking "what's waiting for me?" must be answered
+  from the company-brain block (card ids + titles), not with "I don't have
+  information about your projects".  Run with a configured provider key.
+
+  Step 1 is a warm-up: if the host (proxy Anthropic) is out of credit the
+  REPL must hand off to the user's own key (work mode) instead of erroring
+  every turn — either way the session must be in a usable mode afterwards.
+
+timeout_ms: 90000
+
+steps:
+  - label: session is usable (host, or handed off to own key when the proxy is dry)
+    send: reply with the single word ready
+    expect:
+      # Warm-up only: the handoff notice is not a model reply, so nothing
+      # specific can be asserted here that holds both when the proxy is
+      # healthy (host answers "ready") and when it is dry (hand-off, no reply).
+      reply_omits: ['<<never-in-a-reply>>']
+
+  - label: knows the connected projects by name
+    send: list my connected projects by slug, comma-separated, nothing else
+    expect:
+      reply_contains: ['mod8']
+      reply_omits: ["don't have"]
+
+  - label: names a card that is waiting, with its approval id
+    send: which approval ids are waiting for me right now? reply with the ids only
+    expect:
+      reply_matches: 'apr_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9a-f]{8}'
+      reply_omits: ['no information']

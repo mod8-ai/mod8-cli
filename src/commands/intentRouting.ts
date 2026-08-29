@@ -580,7 +580,29 @@ export function parseTopupCommand(input: string): number | null {
 /** True when the input is exactly `/approvals` — opens the inline
  *  approval panel for the mod8 self-improvement loop. */
 export function isApprovalsCommand(input: string): boolean {
-  return /^\s*\/approvals\s*$/i.test(input);
+  return /^\s*\/approvals(\s+[a-z0-9][a-z0-9-]*)?\s*$/i.test(input);
+}
+
+/** Slug after `/approvals`, if any. */
+export function approvalsSlugOf(input: string): string | undefined {
+  return /^\s*\/approvals\s+([a-z0-9][a-z0-9-]*)\s*$/i.exec(input)?.[1]?.toLowerCase();
+}
+
+/** `/projects` — company brain project list. */
+export function isProjectsCommand(input: string): boolean {
+  return /^\s*\/projects\s*$/i.test(input);
+}
+
+/** `/approve apr_…` | `/reject apr_…` → verdict + id, else null. */
+export function parseDecideCommand(input: string): { verdict: 'approve' | 'reject'; id: string } | null {
+  const m = /^\s*\/(approve|reject)\s+(apr_[A-Za-z0-9_-]+)\s*$/i.exec(input);
+  return m ? { verdict: m[1]!.toLowerCase() as 'approve' | 'reject', id: m[2]! } : null;
+}
+
+/** `/rule <slug>: <text>` → slug + rule text, else null. */
+export function parseRuleCommand(input: string): { slug: string; rule: string } | null {
+  const m = /^\s*\/rule\s+([a-z0-9][a-z0-9-]*)\s*:\s*(.+?)\s*$/i.exec(input);
+  return m ? { slug: m[1]!.toLowerCase(), rule: m[2]! } : null;
 }
 
 /** True when the input is exactly `/halt` — activates the loop kill

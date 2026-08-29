@@ -1,0 +1,58 @@
+name: behavior — the REPL is briefed on the company (charters + cards) and can act on it
+description: |
+  Bug confirmation (2026-08-28): `mod8` could talk about the folder you sat in
+  but knew nothing about your companies — the Harness state under
+  ~/.config/mod8/products/ (charters, pending approvals, tick state, spend)
+  never reached the chat.  "what's going on with hotel-agents?" got a guess.
+
+  Contract locked in here (no model, MOD8_MOCK product under MOD8_CONFIG_DIR):
+    · dev:company-brain prints the block appended to every chat turn's system
+      prompt: every connected project, its charter, its cards waiting
+    · `mod8 projects` (= /projects) lists projects with tick + waiting count
+    · `mod8 rule <slug> <text>` (= /rule) appends ONE bullet to the charter's
+      Non-goals, is idempotent, and refuses a project without a charter
+    · the block names the slash verbs so the model can point the user at them
+
+tests:
+  - name: brain block lists connected projects, charters and a staged card
+    shell: |
+      set -e
+      cd $MOD8_CONFIG_DIR && git init -q brainy && cd brainy && git commit -q --allow-empty -m init
+      mod8 connect add brainy >/dev/null
+      P=$MOD8_CONFIG_DIR/products/brainy
+      printf '# Brainy Co\n\n## What is this product?\nA demo company.\n\n## Who is the user?\nTesters.\n\n## Non-goals\n\n- Never A.\n\n## Voice + brand rules\nPlain.\n\n## The one metric\nTicks.\n' > $P/product.md
+      MOD8_MOCK=1 mod8 loop tick --slug brainy --force >/dev/null
+      mod8 dev:company-brain
+      mod8 projects
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - "# Company brain"
+        - "## Brainy Co  (slug: brainy)"
+        - "charter: present"
+        - "A demo company."
+        - "/approve <apr_id>"
+        - "/rule <slug>: <text>"
+        - "brainy         tick #1"
+
+  - name: rule lands in the charter Non-goals once, and refuses a project with no charter
+    shell: |
+      set -e
+      cd $MOD8_CONFIG_DIR && git init -q ruled && cd ruled && git commit -q --allow-empty -m init
+      mod8 connect add ruled >/dev/null
+      P=$MOD8_CONFIG_DIR/products/ruled
+      printf '# Ruled\n\n## Non-goals\n\n- Never A.\n\n## Voice + brand rules\nPlain.\n' > $P/product.md
+      mod8 rule ruled never touch billing routes
+      mod8 rule ruled never touch billing routes
+      grep -c "never touch billing routes" $P/product.md
+      awk '/## Non-goals/{f=1} /## Voice/{f=0} f' $P/product.md
+      mod8 rule ghost never anything || echo "exit=$?"
+    expect:
+      stdout_contains:
+        - 'ruled: added to charter Non-goals — "never touch billing routes"'
+        - "ruled: rule already in charter"
+        - "1"
+        - "- Never A."
+        - "- never touch billing routes"
+        - "ghost: no charter (product.md)"
+        - "exit=1"
