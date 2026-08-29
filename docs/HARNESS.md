@@ -347,11 +347,15 @@ mod8 marketing answer [--slug X] <n> <text…>     # answer open question #n (a 
 mod8 connect add-adapter <slug> meta             # paste the Page token + Page id (+ IG account id)
 mod8 receipt [-d 7] [-s X] [--raw] [--provider]  # what the Harness did this week
 
+# Web bridge
+mod8 sync [--slug X] [--dry-run] [--json]        # push projects + cards to the dashboard, apply web decisions
+
 # In-chat slash commands
 /approvals                                # opens the panel without leaving the REPL
 /halt                                     # same as `mod8 loop halt`
 /projects · /rule <slug>: <text>          # company brain (see below)
 /marketing [<slug>] · /marketing plan [<slug>] · /marketing answer <slug> <n> <text> · /receipt
+/sync [<slug>]                            # same as `mod8 sync`
 ```
 
 ### Marketing role
@@ -424,6 +428,36 @@ prints the deterministic markdown; otherwise a short narrative is generated
 first (provider: `--provider` → `MOD8_RECEIPT_PROVIDER` → `MOD8_STANDUP_PROVIDER`
 → local Anthropic key → any local key → proxy).  Every run is saved to
 `~/.config/mod8/receipts/<YYYY-MM-DD>.md` (0600).
+
+### Web bridge — `mod8 sync`
+
+```
+mod8 sync [--slug X] [--dry-run] [--json]     # or /sync [<slug>] in the REPL
+```
+
+The truth stays on disk; the mod8 dashboard shows a mirror.  Each run:
+
+1. builds one document per connected project — slug, name (charter heading),
+   full charter, last tick `{id, at, phase, status}`, 7-day spend (micros),
+   the marketing line, pending count — plus its cards (pending, and anything
+   decided in the last 7 days).  A card carries title, summary (the why, ≤ 2000
+   chars), risk/impact, tests, diff stats, and `post {channel, text}` for
+   social posts;
+2. `POST /syncCompany` with the `mod8 login` key (`Authorization: Bearer
+   sk-mod8-…`).  The backend upserts `users/{uid}/company/{slug}` +
+   `…/cards/{id}` and never overwrites a card the web already decided but the
+   CLI has not yet applied — those come back as `decisions`;
+3. applies every web decision through the **same path as `/approve` /
+   `/reject`** (`store.decide → act`).  Approving a post without Meta
+   connected fails at act exactly like it does in the panel;
+4. `POST /ackCompanyDecisions` with `applied` / `failed (+ error)` per card;
+5. prints a table: cards up, cards waiting, decisions applied per project.
+   Exit 1 when a decision failed, 2 when not logged in.
+
+`--dry-run` builds the payload and sends nothing (`--json` prints it).
+`MOD8_API_BASE` overrides the Cloud Functions host (specs point it at a mock).
+Nothing runs automatically — the web only records the decision; the CLI is
+the only thing that ever merges or publishes.
 
 ---
 

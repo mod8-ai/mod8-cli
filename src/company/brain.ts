@@ -227,7 +227,15 @@ export async function decideCard(id: string, verdict: 'approve' | 'reject', slug
   const policy = await loadPolicy(ctx);
   const result = await runAct(ctx, policy, { approvalId: decided.id });
   if (!result.ok || !result.output?.result) {
-    return { ok: false, message: `approved ${decided.id} but act failed: ${result.reason ?? 'no result'}` };
+    // The act phase records the adapter's failure on the card itself
+    // ("Meta creds missing", merge conflict, …) — surface that, not "no result".
+    let stored: string | undefined;
+    try {
+      const after = await approvalStore.load(ctx, decided.id);
+      const err = (after?.appliedResult as { error?: unknown } | undefined)?.error;
+      if (typeof err === 'string' && err) stored = err;
+    } catch { /* keep the generic reason */ }
+    return { ok: false, message: `approved ${decided.id} but act failed: ${stored ?? result.reason ?? 'no result'}` };
   }
   const payload = result.output.result.payload as Record<string, unknown>;
   const sha = typeof payload.newSha === 'string' ? ` → ${payload.newSha.slice(0, 7)}` : '';

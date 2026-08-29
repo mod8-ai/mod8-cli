@@ -225,6 +225,17 @@ program
   });
 
 program
+  .command('sync')
+  .description('Push your company brain (projects + cards) to the mod8 web dashboard and apply decisions made there (same as /sync in the REPL; needs `mod8 login`)')
+  .option('-s, --slug <slug>', 'only this project')
+  .option('--dry-run', 'build the payload and print what would be sent, without calling the backend')
+  .option('--json', 'print the result (and, with --dry-run, the payload) as JSON')
+  .action(async (o: { slug?: string; dryRun?: boolean; json?: boolean }) => {
+    const { syncCommand } = await import('./commands/sync.js');
+    await syncCommand({ slug: o.slug, dryRun: o.dryRun, json: o.json });
+  });
+
+program
   .command('rule <slug> <text...>')
   .description("Add a plain-English rule to a project's charter Non-goals (same as /rule in the REPL)")
   .action(async (slug: string, words: string[]) => {

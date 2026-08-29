@@ -97,6 +97,7 @@ import {
   parseRuleCommand,
   parseMarketingCommand,
   isReceiptCommand,
+  parseSyncCommand,
   isHaltCommand,
   parseTopupCommand,
   parsePreviewCommand,
@@ -1467,6 +1468,7 @@ export function App({
           '  /rule <slug>: <text>   — add a plain-English rule to that project\'s charter\n' +
           '  /marketing <slug>      — marketing role: plan, channels, posts waiting (/marketing plan <slug> drafts this week\'s posts as cards; /marketing answer <slug> <n> <text> answers question #n)\n' +
           '  /receipt               — Friday receipt: what the Harness did this week, what needs you\n' +
+          '  /sync [<slug>]         — push projects + cards to the mod8 web dashboard, apply decisions made there\n' +
           '  /halt                  — freeze the self-improvement loop (writes STOP file)\n' +
           '  /preview [<script>]    — auto-launch the project\'s dev server + open the browser\n' +
           '  /clear                 — wipe transcript + ledger + kill preview servers\n' +
@@ -1599,6 +1601,19 @@ export function App({
         }
       } catch (err) {
         append({ kind: 'error', text: `marketing failed: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      return;
+    }
+
+    const syncCmd = parseSyncCommand(value);
+    if (syncCmd) {
+      try {
+        const { runSync, renderSync } = await import('../company/sync.js');
+        append({ kind: 'info', text: `syncing${syncCmd.slug ? ' ' + syncCmd.slug : ''} with the mod8 dashboard…` });
+        const r = await runSync({ slug: syncCmd.slug });
+        append({ kind: r.decisionsFailed > 0 ? 'error' : 'info', text: renderSync(r).trimEnd() });
+      } catch (err) {
+        append({ kind: 'error', text: `sync failed: ${err instanceof Error ? err.message : String(err)}` });
       }
       return;
     }

@@ -1,0 +1,119 @@
+name: behavior — mod8 sync mirrors the company brain to the web and applies web decisions
+description: |
+  `mod8 sync` (= /sync in the REPL) is the CLI ↔ web bridge for the company
+  brain.  The truth stays on disk; sync pushes every connected project
+  (charter, last tick, 7-day spend, marketing line) plus its cards to
+  POST /syncCompany, receives the decisions the founder made on the web, and
+  applies each one through the SAME path as /approve and /reject
+  (store.decide → act), then POSTs the outcome to /ackCompanyDecisions.
+
+  Contract locked in here (backend mocked with a tiny node HTTP server at
+  MOD8_API_BASE; no model, MOD8_MOCK=1 marketing cards):
+    · not logged in → says so, exit 2, nothing sent
+    · --dry-run builds the payload and sends nothing; --json shows it
+      (slug, name from the charter heading, lastTick, pendingCount, cards
+      with post{channel,text} for social-post cards, summary ≤ 2000 chars)
+    · the sync request carries Authorization: Bearer <mod8Key> and the cards
+    · a web "reject" is applied locally (card leaves pending) and acked as
+      applied; a web "approve" of a post without Meta connected fails at act
+      and is acked as failed WITH the adapter's error — nothing is published
+    · the printed table shows cards up / waiting / decisions per project and
+      exit code is 1 when a decision failed
+    · --slug <unknown> says "no such project", exit 1
+
+tests:
+  - name: not logged in → clear message, exit 2, and dry-run payload shape
+    shell: |
+      cd $MOD8_CONFIG_DIR && git init -q synco && cd synco && git commit -q --allow-empty -m init
+      mod8 connect add synco >/dev/null
+      P=$MOD8_CONFIG_DIR/products/synco
+      printf '# Synco Inc\n\n## What is this product?\nA demo company.\n\n## Who is the user?\nTesters.\n\n## Non-goals\n\n- Never A.\n\n## Voice + brand rules\nPlain.\n\n## The one metric\nTicks.\n' > $P/product.md
+      MOD8_MOCK=1 mod8 marketing plan --slug synco >/dev/null
+      mod8 sync || echo "exit=$?"
+      printf '{"mod8Key":"sk-mod8-SPEC-KEY","proxyUrl":"https://example.invalid"}\n' > $MOD8_CONFIG_DIR/auth.json
+      chmod 600 $MOD8_CONFIG_DIR/auth.json
+      mod8 sync --dry-run
+      mod8 sync --dry-run --json --slug synco | node -e '
+        let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+          const r=JSON.parse(s); const p=r.payload[0];
+          console.log("json slug="+p.slug+" name="+p.name+" pending="+p.pendingCount+" cards="+p.cards.length+" syncedFrom="+p.syncedFrom+" lastTick="+JSON.stringify(p.lastTick));
+          const c=p.cards.slice().sort((a,b)=>a.post.channel.localeCompare(b.post.channel))[0];
+          console.log("card kind="+c.kind+" status="+c.status+" channel="+(c.post&&c.post.channel)+" text="+(c.post&&c.post.text)+" summaryLen<=2000="+(c.summary.length<=2000)+" decidedBy="+c.decidedBy+" acked="+c.ackedByCli);
+          console.log("charterHasHeading="+p.charter.startsWith("# Synco Inc"));
+        });'
+      mod8 sync --dry-run --slug ghost || echo "exit=$?"
+    expect:
+      stdout_contains:
+        - "exit=2"
+        - "project        cards up  waiting  decisions applied"
+        - "synco          2         2        0"
+        - "dry run — nothing sent to https://us-central1-mod8-495901.cloudfunctions.net"
+        - "json slug=synco name=Synco Inc pending=2 cards=2 syncedFrom=cli lastTick=null"
+        - "card kind=marketing status=pending channel=facebook text=Mock post 1 for synco summaryLen<=2000=true decidedBy=null acked=false"
+        - "charterHasHeading=true"
+        - "exit=1"
+      stderr_contains:
+        - "mod8 sync: not logged in — run `mod8 login` first"
+        - "no such project: ghost"
+
+  - name: round trip against a mock backend — reject applied, approve-without-Meta failed, both acked
+    shell: |
+      cd $MOD8_CONFIG_DIR && git init -q rt && cd rt && git commit -q --allow-empty -m init
+      mod8 connect add rt >/dev/null
+      P=$MOD8_CONFIG_DIR/products/rt
+      printf '# RT Co\n\n## What is this product?\nA demo company.\n\n## Who is the user?\nTesters.\n\n## Non-goals\n\n- Never A.\n\n## Voice + brand rules\nPlain.\n\n## The one metric\nTicks.\n' > $P/product.md
+      MOD8_MOCK=1 mod8 marketing plan --slug rt >/dev/null
+      printf '{"mod8Key":"sk-mod8-SPEC-KEY","proxyUrl":"https://example.invalid"}\n' > $MOD8_CONFIG_DIR/auth.json
+      chmod 600 $MOD8_CONFIG_DIR/auth.json
+      LOG=$MOD8_CONFIG_DIR/mock.log
+      cat > $MOD8_CONFIG_DIR/mock.cjs <<'JS'
+      const http = require('http'); const fs = require('fs');
+      const log = process.argv[2], portFile = process.argv[3];
+      const srv = http.createServer((req, res) => {
+        let body = ''; req.on('data', d => body += d).on('end', () => {
+          fs.appendFileSync(log, JSON.stringify({ path: req.url, auth: req.headers.authorization, body: JSON.parse(body || '{}') }) + '\n');
+          let out = {};
+          if (req.url === '/syncCompany') {
+            const p = JSON.parse(body).projects[0];
+            const ids = p.cards.filter(c => c.status === 'pending').map(c => c.id).sort();
+            out = { decisions: [
+              { slug: p.slug, cardId: ids[0], status: 'rejected', decidedAt: 1 },
+              { slug: p.slug, cardId: ids[1], status: 'approved', decidedAt: 2 },
+            ] };
+          } else if (req.url === '/ackCompanyDecisions') out = { acked: JSON.parse(body).items.length };
+          res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(out));
+        });
+      });
+      srv.listen(0, '127.0.0.1', () => fs.writeFileSync(portFile, String(srv.address().port)));
+      setTimeout(() => process.exit(0), 20000);
+      JS
+      node $MOD8_CONFIG_DIR/mock.cjs $LOG $MOD8_CONFIG_DIR/port &
+      MOCK_PID=$!
+      for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -f $MOD8_CONFIG_DIR/port ] && break; sleep 0.25; done
+      export MOD8_API_BASE=http://127.0.0.1:$(cat $MOD8_CONFIG_DIR/port)
+      MOD8_MOCK=1 mod8 sync --slug rt || echo "exit=$?"
+      kill $MOCK_PID 2>/dev/null; wait $MOCK_PID 2>/dev/null
+      echo "--- pending after ---"
+      mod8 approvals-cli list --slug rt
+      echo "--- requests ---"
+      node -e '
+        const lines = require("fs").readFileSync(process.argv[1], "utf8").trim().split("\n").map(l => JSON.parse(l));
+        for (const r of lines) {
+          if (r.path === "/syncCompany") console.log("sync auth=" + r.auth + " projects=" + r.body.projects.length + " cards=" + r.body.projects[0].cards.length);
+          if (r.path === "/ackCompanyDecisions") for (const it of r.body.items) console.log("ack " + it.result + " slug=" + it.slug + (it.error ? " error=" + it.error : ""));
+        }' $LOG
+    expect:
+      stdout_contains:
+        - "rt             2         2        1/2"
+        - "✓ rejected (web) rejected apr_"
+        - "✗ approved (web) approved apr_"
+        - "act failed: Meta creds missing"
+        - "web decisions: 1 applied, 1 failed"
+        - "exit=1"
+        - "no pending approvals"
+        - "sync auth=Bearer sk-mod8-SPEC-KEY projects=1 cards=2"
+        - "ack applied slug=rt"
+        - "ack failed slug=rt error=approved apr_"
+        - "Meta creds missing"
+      stdout_omits:
+        - "acted:"

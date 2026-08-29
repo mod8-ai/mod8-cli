@@ -130,6 +130,8 @@ mod8 publish                # dry-run: show what would ship
 mod8 publish --confirm      # ship to <slug>.apps.mod8.ai
 mod8 publish --domain site.com  # also bind a custom domain
 
+mod8 sync                   # mirror your projects + cards to the dashboard, apply web decisions
+
 mod8 keys list              # who's configured
 mod8 add-provider           # add any OpenAI-compatible API
 mod8 verify                 # run 300+ self-tests

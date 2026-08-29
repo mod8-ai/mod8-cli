@@ -623,6 +623,12 @@ export function parseMarketingCommand(input: string): MarketingReplCommand | nul
   return { sub: (m[1]?.toLowerCase() as 'plan' | 'status' | undefined) ?? 'status', slug: m[2]?.toLowerCase() ?? null };
 }
 
+/** `/sync [<slug>]` — push the company brain to the web + apply web decisions. */
+export function parseSyncCommand(input: string): { slug?: string } | null {
+  const m = /^\s*\/sync(?:\s+([a-z0-9][a-z0-9-]*))?\s*$/i.exec(input);
+  return m ? (m[1] ? { slug: m[1].toLowerCase() } : {}) : null;
+}
+
 /** `/receipt` — the Friday receipt, printed raw (no model). */
 export function isReceiptCommand(input: string): boolean {
   return /^\s*\/receipt\s*$/i.test(input);
