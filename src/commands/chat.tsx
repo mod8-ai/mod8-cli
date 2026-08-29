@@ -95,6 +95,8 @@ import {
   isProjectsCommand,
   parseDecideCommand,
   parseRuleCommand,
+  parseMarketingCommand,
+  isReceiptCommand,
   isHaltCommand,
   parseTopupCommand,
   parsePreviewCommand,
@@ -1463,6 +1465,8 @@ export function App({
           '  /approve <apr_id>      — approve a card (merges / publishes via the act phase)\n' +
           '  /reject <apr_id>       — reject a card\n' +
           '  /rule <slug>: <text>   — add a plain-English rule to that project\'s charter\n' +
+          '  /marketing <slug>      — marketing role: plan, channels, posts waiting (/marketing plan <slug> drafts this week\'s posts as cards; /marketing answer <slug> <n> <text> answers question #n)\n' +
+          '  /receipt               — Friday receipt: what the Harness did this week, what needs you\n' +
           '  /halt                  — freeze the self-improvement loop (writes STOP file)\n' +
           '  /preview [<script>]    — auto-launch the project\'s dev server + open the browser\n' +
           '  /clear                 — wipe transcript + ledger + kill preview servers\n' +
@@ -1564,6 +1568,51 @@ export function App({
       const { addCharterRule } = await import('../company/brain.js');
       const r = await addCharterRule(ruleCmd.slug, ruleCmd.rule);
       append({ kind: r.ok ? 'info' : 'error', text: r.message });
+      return;
+    }
+
+    const mktCmd = parseMarketingCommand(value);
+    if (mktCmd) {
+      try {
+        const { runMarketingPlan, renderMarketingStatus, answerMarketingQuestion, slugForCwd } = await import('../company/marketing.js');
+        if (mktCmd.sub === 'answer') {
+          const r = await answerMarketingQuestion(mktCmd.slug, mktCmd.n, mktCmd.text);
+          append({ kind: r.ok ? 'info' : 'error', text: r.message });
+          return;
+        }
+        const slug = mktCmd.slug ?? (await slugForCwd());
+        if (!slug) {
+          append({ kind: 'error', text: `this folder is not a connected product — use /marketing ${mktCmd.sub === 'plan' ? 'plan ' : ''}<slug> (see /projects)` });
+          return;
+        }
+        if (mktCmd.sub === 'plan') {
+          append({ kind: 'info', text: `planning marketing for ${slug}…` });
+          const r = await runMarketingPlan(slug);
+          const extra = r.ok
+            ? [r.cards.length ? `cards: ${r.cards.join(', ')}\napprove with /approve <id>${r.blocked ? `\nblocked: Meta not connected — first: mod8 connect add-adapter ${slug} meta` : ''}` : null,
+               r.questions.length ? `questions for you:\n${r.questions.map((q, i) => `  ${i + 1}. ${q}`).join('\n')}\nanswer with /marketing answer ${slug} <n> <your answer>` : null]
+              .filter(Boolean).join('\n')
+            : '';
+          append({ kind: r.ok ? 'info' : 'error', text: [r.message, extra].filter(Boolean).join('\n') });
+        } else {
+          append({ kind: 'info', text: (await renderMarketingStatus(slug)).trimEnd() });
+        }
+      } catch (err) {
+        append({ kind: 'error', text: `marketing failed: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      return;
+    }
+
+    if (isReceiptCommand(value)) {
+      try {
+        const { buildReceiptDigest, renderReceipt, writeReceipt } = await import('../company/receipt.js');
+        const digest = await buildReceiptDigest();
+        const md = renderReceipt(digest);
+        const path = await writeReceipt(digest, md);
+        append({ kind: 'info', text: `${md.trimEnd()}\nsaved ${path}` });
+      } catch (err) {
+        append({ kind: 'error', text: `receipt failed: ${err instanceof Error ? err.message : String(err)}` });
+      }
       return;
     }
 

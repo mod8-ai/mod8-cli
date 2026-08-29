@@ -1,0 +1,49 @@
+name: marketing role + Friday receipt — the REPL knows the verbs and the marketing state of a project
+description: |
+  Real Ink REPL, real provider (DeepSeek locally; the proxy hands off when it
+  is out of credit).  Two things are proven here:
+
+    1. the slash verbs /receipt and /marketing <slug> run inside a live
+       session without breaking it (smoke: they are Tier-A info messages,
+       which the drive runner cannot capture as a "reply" — it only reads
+       assistant-box lines — so the assertions on them are survival-only;
+       their exact text is locked by specs/behavior/receipt.yaml and
+       specs/behavior/marketing-role.yaml);
+    2. the model is briefed: the company-brain block carries a
+       "marketing:" line per project and names /receipt, so asking about
+       sleepwell's marketing or the weekly receipt is answered from the
+       brief — not with "I don't have information".
+
+  sleepwell must be a connected project on this machine.
+
+timeout_ms: 90000
+
+steps:
+  - label: session is usable (host, or handed off to own key when the proxy is dry)
+    send: reply with the single word ready
+    expect:
+      reply_omits: ['<<never-in-a-reply>>']
+
+  - label: /receipt runs live without breaking the session (smoke)
+    send: /receipt
+    no_turn: true
+    expect:
+      reply_omits: ['<<never-in-a-reply>>']
+
+  - label: /marketing sleepwell runs live without breaking the session (smoke)
+    send: /marketing sleepwell
+    no_turn: true
+    expect:
+      reply_omits: ['<<never-in-a-reply>>']
+
+  - label: model answers sleepwell's marketing state from the brief
+    send: quote the "marketing:" line for the sleepwell project from your briefing, verbatim, nothing else
+    expect:
+      reply_contains: ['posts waiting']
+      reply_omits: ["don't have"]
+
+  - label: model knows the Friday receipt verb
+    send: which slash command prints the Friday receipt, and what is it called? one short line
+    expect:
+      reply_contains: ['/receipt', 'Friday receipt']
+      reply_omits: ["don't have"]

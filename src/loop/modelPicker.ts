@@ -25,6 +25,7 @@ const DEFAULT_BY_PHASE: Record<PhaseId, string> = {
   act: 'claude-haiku-4-5',
   measure: 'claude-sonnet-4-6',
   learn: 'claude-haiku-4-5',
+  marketing: 'claude-sonnet-4-6',
 };
 
 /** Set once per tick from policy.yaml `models:`; cleared by the caller. */

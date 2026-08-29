@@ -1,0 +1,116 @@
+name: behavior — the Marketing role drafts posts as cards, asks the founder, and refuses to publish without Meta
+description: |
+  The company that runs itself needs a marketing arm that never posts on its
+  own.  `mod8 marketing plan` (= /marketing plan <slug>) reads the charter,
+  writes products/<slug>/marketing/plan.md and turns each post into a CARD
+  (ApprovalItem kind=marketing, proposedAction social-post) the founder
+  approves with [a].  Open questions land in marketing/questions.jsonl and are
+  answered with `mod8 marketing answer <n> <text>` (facts the next plan reads);
+  `mod8 rule` stays the path for prohibitions (charter Non-goals).
+
+  Contract locked in here (no model — MOD8_MOCK=1 yields a deterministic plan):
+    · plan writes plan.md (mode 600) and prints one apr_ id per post
+    · `mod8 projects` counts those cards as "waiting for you"
+    · dev:company-brain carries a "marketing:" line per project and names
+      the channel state ("facebook not connected")
+    · approving a post WITHOUT connectors/meta.json fails loudly at act,
+      naming Meta — nothing is ever published silently
+    · `mod8 marketing status` shows the plan, channels and "posts waiting"
+    · re-running plan does NOT duplicate identical pending cards
+    · answering question #n removes it from "open questions"; the printed
+      next-step is a command that actually exists (`mod8 approvals --slug`)
+    · `/marketing plan` with no slug is a plan, not a status for product "plan"
+
+tests:
+  - name: plan writes plan.md, creates 2 cards, and the brain knows about the role
+    shell: |
+      set -e
+      cd $MOD8_CONFIG_DIR && git init -q mkt && cd mkt && git commit -q --allow-empty -m init
+      mod8 connect add mkt >/dev/null
+      P=$MOD8_CONFIG_DIR/products/mkt
+      printf '# Mkt Co\n\n## What is this product?\nA demo company.\n\n## Who is the user?\nTesters.\n\n## Non-goals\n\n- Never A.\n\n## Voice + brand rules\nPlain.\n\n## The one metric\nTicks.\n' > $P/product.md
+      MOD8_MOCK=1 mod8 marketing plan --slug mkt
+      MOD8_MOCK=1 mod8 marketing plan --slug mkt
+      echo "pending=$(mod8 approvals-cli list --slug mkt | grep -c apr_)"
+      grep -l 'BLOCKED: Meta not connected' $P/approvals/pending/*.json | wc -l | tr -d ' ' | sed 's/^/blocked_cards=/'
+      test -f $P/marketing/plan.md && echo "plan.md exists"
+      stat -f '%Lp' $P/marketing/plan.md 2>/dev/null || stat -c '%a' $P/marketing/plan.md
+      grep -c '"answered":false' $P/marketing/questions.jsonl
+      mod8 projects
+      mod8 dev:company-brain
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - "mkt: plan written (2 posts → 2 cards waiting, 1 question for you)"
+        - "mkt: plan written (2 posts → 2 cards waiting (2 already waiting, not duplicated), 1 question for you)"
+        - "pending=2"
+        - "blocked: Meta not connected — approving now fails; first: mod8 connect add-adapter mkt meta"
+        - "blocked_cards=2"
+        - "plan.md exists"
+        - "600"
+        - "2 waiting for you"
+        - "[facebook] Mock post 1 for mkt"
+        - "[instagram] Mock post 2 for mkt"
+        - "marketing: plan just now · facebook not connected · 2 posts waiting"
+        - "/marketing <slug>"
+        - "/receipt"
+      stdout_matches:
+        - "apr_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9a-f]{8}\\s+apr_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9a-f]{8}"
+
+  - name: approving a post without Meta connected fails at act and names Meta
+    shell: |
+      set -e
+      cd $MOD8_CONFIG_DIR && git init -q nometa && cd nometa && git commit -q --allow-empty -m init
+      mod8 connect add nometa >/dev/null
+      P=$MOD8_CONFIG_DIR/products/nometa
+      printf '# NoMeta\n\n## What is this product?\nA demo company.\n\n## Who is the user?\nTesters.\n\n## Non-goals\n\n- Never A.\n\n## Voice + brand rules\nPlain.\n\n## The one metric\nTicks.\n' > $P/product.md
+      MOD8_MOCK=1 mod8 marketing plan --slug nometa >/dev/null
+      ID=$(mod8 approvals-cli list --slug nometa | head -1 | cut -d' ' -f1)
+      echo "id=$ID"
+      MOD8_MOCK=1 mod8 approvals-cli decide $ID approve --slug nometa 2>&1 || echo "exit=$?"
+      mod8 approvals-cli list --slug nometa
+    expect:
+      stdout_contains:
+        - "approved: apr_"
+        - "act failed: Meta creds missing"
+        - "exit=1"
+        - "Mock post 1 for nometa"
+      stdout_omits:
+        - "acted:"
+
+  - name: status shows the plan, channel state, posts waiting and the open question
+    shell: |
+      set -e
+      cd $MOD8_CONFIG_DIR && git init -q mst && cd mst && git commit -q --allow-empty -m init
+      mod8 connect add mst >/dev/null
+      P=$MOD8_CONFIG_DIR/products/mst
+      printf '# Mst\n\n## What is this product?\nA demo company.\n\n## Who is the user?\nTesters.\n\n## Non-goals\n\n- Never A.\n\n## Voice + brand rules\nPlain.\n\n## The one metric\nTicks.\n' > $P/product.md
+      mod8 marketing status --slug mst
+      MOD8_MOCK=1 mod8 marketing plan --slug mst >/dev/null
+      mod8 marketing status --slug mst
+      head -3 $P/marketing/plan.md
+      mod8 marketing answer --slug mst 1 "September 15"
+      mod8 marketing status --slug mst | grep -A1 'open questions'
+      mod8 receipt --raw --slug mst | grep -c 'Mock question' || true
+      mod8 marketing answer --slug mst 1 "again" 2>&1 || echo "exit=$?"
+    expect:
+      stdout_contains:
+        - "marketing — mst"
+        - "plan:          none"
+        - "mod8 marketing plan --slug mst"
+        - "plan:          just now ("
+        - "facebook:      not connected"
+        - "posts waiting: 2"
+        - "1. Mock question?"
+        - "answer with: mod8 marketing answer --slug mst <n> <your answer>"
+        - "mod8 approvals --slug mst   (or /approve <id> in the REPL)"
+        - "connect Meta: mod8 connect add-adapter mst meta"
+        - "answered \"Mock question?\" → \"September 15\""
+        - "open questions: none"
+        - "no open marketing questions"
+        - "exit=1"
+        - "# Marketing plan — mst"
+      stdout_omits:
+        - "[q] mst"
+      stdout_matches:
+        - "date: [0-9]{4}-[0-9]{2}-[0-9]{2}T"

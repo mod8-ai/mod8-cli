@@ -234,6 +234,32 @@ program
     if (!r.ok) process.exit(1);
   });
 
+program
+  .command('marketing <sub> [args...]')
+  .description('Marketing role: `plan` drafts this week\'s posts as cards for you to approve, `status` shows the plan + channels, `answer <n> <text…>` answers open question #n (same as /marketing in the REPL)')
+  .option('-s, --slug <slug>', 'product slug (default: the connected project for this folder)')
+  .option('--provider <id>', 'provider or model to plan with (anthropic | deepseek | provider/model); default: the phase\'s configured model')
+  .action(async (sub: string, args: string[], o: { slug?: string; provider?: string }) => {
+    if (sub !== 'plan' && sub !== 'status' && sub !== 'answer') {
+      process.stderr.write("mod8 marketing: sub-command must be 'plan', 'status' or 'answer'\n");
+      process.exit(2);
+    }
+    const { marketingCommand } = await import('./commands/marketing.js');
+    await marketingCommand(sub, { slug: o.slug, provider: o.provider, args });
+  });
+
+program
+  .command('receipt')
+  .description('Friday receipt: what the Harness did this week per project — ticks, cards, hit rate, merges, posts, spend, what needs you (same as /receipt in the REPL)')
+  .option('-d, --days <n>', 'window in days', '7')
+  .option('-s, --slug <slug>', 'only this project')
+  .option('--raw', 'print the deterministic receipt without calling a model')
+  .option('--provider <id>', 'provider to narrate with (anthropic | deepseek | groq | …); default: local Anthropic key, else any local key, else proxy')
+  .action(async (o: { days: string; slug?: string; raw?: boolean; provider?: string }) => {
+    const { receiptCommand } = await import('./commands/receipt.js');
+    await receiptCommand({ days: Number(o.days) || 7, slug: o.slug, raw: o.raw, provider: o.provider });
+  });
+
 // Dev endpoint: print the company block appended to every chat turn's
 // system prompt, so specs can assert the REPL is briefed without a model.
 program

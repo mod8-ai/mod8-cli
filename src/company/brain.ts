@@ -40,6 +40,8 @@ export interface PendingCard {
 }
 
 export interface ProjectBrain {
+  /** 1–3 lines from the marketing role (plan age, channels, posts waiting). */
+  marketing: string[];
   slug: string;
   /** First heading of product.md, e.g. "Hotel-Agents.ai (Aira)". */
   name: string;
@@ -111,7 +113,12 @@ export async function readProject(slug: string): Promise<ProjectBrain> {
   } catch { /* no state yet */ }
   let pending: PendingCard[] = [];
   try { pending = (await approvalStore.listPending(ctx)).map(toCard); } catch { /* none */ }
-  return { slug, name, charter, hasCharter, lastTickId, lastTickAt, spend7dUsd: await readSpend7d(slug), pending };
+  let marketing: string[] = [];
+  try {
+    const { marketingBrainLines } = await import('./marketing.js');
+    marketing = await marketingBrainLines(slug);
+  } catch { /* role not initialised */ }
+  return { slug, name, charter, hasCharter, lastTickId, lastTickAt, spend7dUsd: await readSpend7d(slug), pending, marketing };
 }
 
 export async function readCompanyBrain(): Promise<CompanyBrain> {
@@ -157,6 +164,8 @@ export function buildCompanyBlock(brain: CompanyBrain): string {
   lines.push('  /approve <apr_id>      — approve a card (merges / publishes via the act phase)');
   lines.push('  /reject <apr_id>       — reject a card');
   lines.push('  /rule <slug>: <text>   — add a plain-English rule to that project\'s charter (Non-goals)');
+  lines.push('  /marketing <slug>      — marketing role status; /marketing plan <slug> drafts this week\'s posts as cards');
+  lines.push('  /receipt               — Friday receipt: what the Harness did this week, what needs the user');
   lines.push('When the user states a rule for a project in conversation ("for hotel-agents, never touch billing routes"), ');
   lines.push('confirm the exact wording and tell them to run /rule so it lands in the charter — you cannot write files yourself.');
   lines.push('When the user says "approve"/"reject" for a card, answer with the exact /approve or /reject line to run.');
@@ -176,6 +185,7 @@ export function buildCompanyBlock(brain: CompanyBrain): string {
         lines.push(`    ${c.title}`);
       }
     }
+    for (const l of p.marketing) lines.push(l);
     if (p.hasCharter) {
       const body = p.charter.length > CHARTER_CHARS ? p.charter.slice(0, CHARTER_CHARS) + '\n…(truncated)' : p.charter;
       lines.push('charter:');

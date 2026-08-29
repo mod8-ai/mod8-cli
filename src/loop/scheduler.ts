@@ -104,6 +104,7 @@ export function decidePhases(
       act: reasons.act ?? 'never scheduled — triggered by approval Panel',
       measure: reasons.measure ?? 'not evaluated',
       learn: reasons.learn ?? 'not evaluated',
+      marketing: reasons.marketing ?? 'never scheduled — run by `mod8 marketing plan`',
     },
   };
 }

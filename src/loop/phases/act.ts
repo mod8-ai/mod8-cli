@@ -33,7 +33,7 @@ import * as worktree from '../worktree.js';
 import * as state from '../state.js';
 import * as events from '../events.js';
 import * as audit from '../audit.js';
-import { get as getAdapter } from '../adapters/registry.js';
+import { get as getAdapter, loadAllAdapters } from '../adapters/registry.js';
 import { effectiveAutonomy } from '../policy.js';
 import type { PolicyConfig, ProductContext } from '../types.js';
 import type { ActionResult } from '../adapters/types.js';
@@ -57,6 +57,10 @@ export async function run(
   policy: PolicyConfig,
   input: ActInput
 ): Promise<PhaseResult<ActOutput>> {
+  // Approvals from the REPL / approvals-cli reach act without a tick having
+  // run loadAllAdapters(); make sure every sink (github, meta, …) is
+  // registered before dispatch.  Idempotent — re-imports are no-ops.
+  await loadAllAdapters();
   return runDeterministicPhase<ActOutput>({
     ctx,
     phase: 'act',
@@ -264,7 +268,11 @@ async function mergeLocally(ctx: ProductContext, approval: import('../../approva
 }
 
 function adapterForActionType(type: string, channel?: string): string {
-  if (type === 'social-post' || type === 'user-reply') return channel ?? 'unknown';
+  if (type === 'social-post') {
+    if (channel === 'facebook' || channel === 'instagram' || channel === 'meta') return 'meta';
+    return channel ?? 'unknown';
+  }
+  if (type === 'user-reply') return channel ?? 'unknown';
   if (type === 'website-copy') return 'vercel';
   if (type === 'experiment') return 'posthog';
   if (type === 'ad-spend') return 'google-ads';

@@ -340,10 +340,90 @@ mod8 connect list                         # connected products + policy/charter 
 mod8 connect remove <slug>                # delete ~/.config/mod8/products/<slug>/
 mod8 connect add-adapter <slug> <adapter> # paste credentials interactively
 
+# Marketing role + Friday receipt
+mod8 marketing plan [--slug X] [--provider ID]   # draft this week's posts → cards
+mod8 marketing status [--slug X]                 # plan age, channels, posts waiting, open questions
+mod8 marketing answer [--slug X] <n> <text…>     # answer open question #n (a fact for the next plan)
+mod8 connect add-adapter <slug> meta             # paste the Page token + Page id (+ IG account id)
+mod8 receipt [-d 7] [-s X] [--raw] [--provider]  # what the Harness did this week
+
 # In-chat slash commands
 /approvals                                # opens the panel without leaving the REPL
 /halt                                     # same as `mod8 loop halt`
+/projects · /rule <slug>: <text>          # company brain (see below)
+/marketing [<slug>] · /marketing plan [<slug>] · /marketing answer <slug> <n> <text> · /receipt
 ```
+
+### Marketing role
+
+The Marketing role is the Harness's first non-code arm.  It never posts on
+its own — every post is a card you approve with `[a]`.
+
+```
+mod8 marketing plan --slug <slug>     # or /marketing plan [<slug>] in the REPL
+mod8 marketing status --slug <slug>   # or /marketing [<slug>]
+mod8 approvals --slug <slug>          # the panel; or /approve <apr_id> in the REPL
+```
+
+`--slug` (and the REPL slug) default to the connected product whose charter
+points at the current folder.
+
+`plan` reads the charter (`products/<slug>/product.md` — voice rules, the one
+metric), the connected channels (`connectors/meta.json` ⇒ Facebook +
+Instagram), the previous plan and your last decisions (rejected posts become
+"do not repeat"), then runs the `marketing` phase (structured LLM output; with
+`MOD8_MOCK=1` a deterministic fixture) and writes:
+
+| File | What |
+|------|------|
+| `products/<slug>/marketing/plan.md` (0600) | positioning, week plan, the posts, open questions |
+| `products/<slug>/marketing/questions.jsonl` | append-only `{ts, question, answered}` / `{…, answered:true, answer}` — latest entry per question wins |
+| `products/<slug>/approvals/…` | one **card** per post: kind `marketing`, action `social-post` (channel + text); rollback is manual (delete the post on the Page) — re-planning reuses an identical pending card instead of duplicating it |
+| `products/<slug>/proposals/…` | the matching `marketing-post` proposal (staged) |
+
+Approving a card dispatches the act phase → the `meta` adapter.  Connect Meta
+first with `mod8 connect add-adapter <slug> meta` (Page access token, Page id,
+optional Instagram business account id → `connectors/meta.json`, 0600).
+Without it the plan still runs — the cards say **BLOCKED: Meta not connected**
+in their reason — and approving one fails with `Meta creds missing`, marking
+the card `failed`; nothing is ever published silently.  Instagram additionally
+needs `igUserId` and a public media URL.
+
+**Answers are facts; rules are bans.**  When the plan asks something
+("What is the launch date?"), answer it by number — `status` lists the open
+questions as `1.`, `2.`, …:
+
+```
+mod8 marketing answer --slug <slug> 1 September 15      # or /marketing answer <slug> 1 September 15
+```
+
+The answer is filed in `questions.jsonl` (`answered:true`), the question
+leaves "Needs you", and the next `plan` reads it under **Founder answers** —
+facts the model must use.  A *prohibition* is different: `mod8 rule <slug>
+never mention pricing in social posts` (or `/rule <slug>: …`) lands in the
+charter's `## Non-goals`, which the role treats as banned.  Do not answer a
+factual question with `mod8 rule` — it would become something the role must
+avoid mentioning.
+
+### Friday receipt
+
+```
+mod8 receipt [--days 7] [--slug X] [--raw] [--provider ID]   # or /receipt in the REPL
+```
+
+The weekly proof of work, per project: ticks, proposals, cards
+created/approved/rejected/applied/failed, hit rate (approved ÷ decided),
+merges (sha7 + title), posts, spend, measurements, open marketing questions —
+then **Needs you**: pending cards (`[a]`, flagged stale after 3 days) and
+unanswered questions (`[q]`), each with the exact line to run
+(`→ /approve <id>` / `→ mod8 marketing answer --slug <slug> <n> …`).
+`--slug <unknown>` says `no such project` and exits 1.  Data comes from the hash-chained `audit.jsonl`
+(`tick.start`, `measure.complete`), the approval index, `spend.jsonl` and
+`marketing/questions.jsonl` — no model is needed.  `--raw` (or `MOD8_MOCK=1`)
+prints the deterministic markdown; otherwise a short narrative is generated
+first (provider: `--provider` → `MOD8_RECEIPT_PROVIDER` → `MOD8_STANDUP_PROVIDER`
+→ local Anthropic key → any local key → proxy).  Every run is saved to
+`~/.config/mod8/receipts/<YYYY-MM-DD>.md` (0600).
 
 ---
 

@@ -67,7 +67,15 @@ export async function approvalsDecide(id: string, verdict: string, opts: { slug?
   const policy = await loadPolicy(ctx);
   const result = await runAct(ctx, policy, { approvalId: decided.id });
   if (!result.ok || !result.output?.result) {
-    process.stderr.write(`act failed: ${result.reason ?? 'no result'}\n`);
+    // The act phase records the adapter's failure on the card itself
+    // ("Meta creds missing", merge conflict, …) — surface that, not "no result".
+    let stored: string | undefined;
+    try {
+      const after = await store.load(ctx, decided.id);
+      const err = (after?.appliedResult as { error?: unknown } | undefined)?.error;
+      if (typeof err === 'string' && err) stored = err;
+    } catch { /* keep the generic reason */ }
+    process.stderr.write(`act failed: ${stored ?? result.reason ?? 'no result'}\n`);
     process.exit(1);
   }
   process.stdout.write(`acted: ${JSON.stringify(result.output.result.payload)}\n`);

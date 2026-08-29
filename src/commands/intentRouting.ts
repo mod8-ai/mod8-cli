@@ -605,6 +605,29 @@ export function parseRuleCommand(input: string): { slug: string; rule: string } 
   return m ? { slug: m[1]!.toLowerCase(), rule: m[2]! } : null;
 }
 
+export type MarketingReplCommand =
+  | { sub: 'plan' | 'status'; slug: string | null }
+  | { sub: 'answer'; slug: string; n: number; text: string };
+
+/** `/marketing [<slug>]` → status; `/marketing plan [<slug>]` → run the plan;
+ *  `/marketing answer <slug> <n> <text…>` → answer open question #n.
+ *  A missing slug comes back as null (the caller defaults it to the cwd's
+ *  product, like the CLI) — so `/marketing plan` is a plan, never a status
+ *  for a product called "plan".  Null when the input is not /marketing. */
+export function parseMarketingCommand(input: string): MarketingReplCommand | null {
+  if (!/^\s*\/marketing(\s|$)/i.test(input)) return null;
+  const ans = /^\s*\/marketing\s+answer\s+([a-z0-9][a-z0-9-]*)\s+(\d+)\s+(\S.*)$/i.exec(input);
+  if (ans) return { sub: 'answer', slug: ans[1]!.toLowerCase(), n: Number(ans[2]), text: ans[3]!.trim() };
+  const m = /^\s*\/marketing(?:\s+(plan|status))?(?:\s+([a-z0-9][a-z0-9-]*))?\s*$/i.exec(input);
+  if (!m) return null;
+  return { sub: (m[1]?.toLowerCase() as 'plan' | 'status' | undefined) ?? 'status', slug: m[2]?.toLowerCase() ?? null };
+}
+
+/** `/receipt` — the Friday receipt, printed raw (no model). */
+export function isReceiptCommand(input: string): boolean {
+  return /^\s*\/receipt\s*$/i.test(input);
+}
+
 /** True when the input is exactly `/halt` — activates the loop kill
  *  switch (writes the STOP file so any in-flight or scheduled tick
  *  becomes a no-op). */

@@ -1,0 +1,59 @@
+name: behavior — the Friday receipt tells the founder what the Harness did this week and what needs him
+description: |
+  `mod8 receipt` (= /receipt) is the weekly proof of work: per project —
+  ticks, proposals, cards created/approved/rejected/applied/failed, hit rate,
+  merges (sha7), posts, spend, open marketing questions — then a "Needs you"
+  list of pending cards ([a]) and questions ([q]).  It is deterministic with
+  --raw (or MOD8_MOCK=1) and is always saved to receipts/<YYYY-MM-DD>.md.
+
+tests:
+  - name: after a mock tick + a rule, the raw receipt lists the project, hit rate, needs-you and the saved path
+    shell: |
+      set -e
+      cd $MOD8_CONFIG_DIR && git init -q rcpt && cd rcpt && git commit -q --allow-empty -m init
+      mod8 connect add rcpt >/dev/null
+      P=$MOD8_CONFIG_DIR/products/rcpt
+      printf '# Receipt Co\n\n## What is this product?\nA demo company.\n\n## Who is the user?\nTesters.\n\n## Non-goals\n\n- Never A.\n\n## Voice + brand rules\nPlain.\n\n## The one metric\nTicks.\n' > $P/product.md
+      MOD8_MOCK=1 mod8 loop tick --slug rcpt --force >/dev/null
+      mod8 rule rcpt never spam >/dev/null
+      mod8 receipt --raw
+      ls $MOD8_CONFIG_DIR/receipts
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - "# Friday receipt"
+        - "## Receipt Co  (rcpt)"
+        - "- ticks 1"
+        - "hit rate"
+        - "measurements: no measurements yet"
+        - "## Needs you:"
+        - "saved "
+        - "receipts/"
+      stdout_matches:
+        - "\n[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md"
+
+  - name: --slug for a project that is not connected says "no such project" and exits 1
+    shell: |
+      cd $MOD8_CONFIG_DIR && git init -q real && cd real && git commit -q --allow-empty -m init
+      mod8 connect add real >/dev/null
+      mod8 receipt --raw --slug typo
+      echo "exit=$?"
+    expect:
+      stdout_contains:
+        - "no such project \"typo\""
+        - "exit=1"
+      stdout_omits:
+        - "no projects connected"
+
+  - name: with nothing connected the receipt still prints, says so, and exits 0
+    shell: |
+      mod8 receipt --raw
+      echo "exit=$?"
+    expect:
+      stdout_contains:
+        - "# Friday receipt"
+        - "no projects connected"
+        - "## Needs you:"
+        - "- nothing"
+        - "saved "
+        - "exit=0"

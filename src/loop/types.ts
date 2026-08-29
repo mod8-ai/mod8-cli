@@ -42,7 +42,8 @@ export type PhaseId =
   | 'build'         // build + stage
   | 'act'
   | 'measure'
-  | 'learn';
+  | 'learn'
+  | 'marketing';   // marketing role: positioning → posts as approval cards (src/company/marketing.ts)
 
 /** One emitted event from a phase.  Written to events.jsonl, consumed
  *  by `mod8 loop logs` and `mod8 loop status`. */
