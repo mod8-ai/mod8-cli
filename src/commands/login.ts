@@ -25,6 +25,11 @@ import {
 
 const DEFAULT_LOGIN_URL = 'https://mod8-495901.web.app/cli-login';
 
+/** The key itself was rejected — the only failure that must block login. */
+class ProxyKeyRejected extends Error {
+  constructor() { super('Key not recognized by the proxy.'); this.name = 'ProxyKeyRejected'; }
+}
+
 interface ProxyMeResponse {
   email?: string;
   availableMicros?: number;
@@ -67,13 +72,34 @@ export async function loginCommand(): Promise<void> {
 
   // Sanity-ping the proxy with a tiny request — confirms the key is real
   // AND lets us echo the email + balance back to the user immediately.
-  const meta = await pingProxy(proxyUrl, trimmed);
+  //
+  // The ping spends real upstream credit, so it fails for reasons that have
+  // nothing to do with the key (dry Anthropic account, upstream 5xx).  Only a
+  // 401 means "this key is bad"; anything else must NOT cost the user their
+  // login — we save the key and say what happened.
+  let meta: ProxyMeResponse = {};
+  let pingWarning: string | null = null;
+  try {
+    meta = await pingProxy(proxyUrl, trimmed);
+  } catch (err) {
+    if (err instanceof ProxyKeyRejected) throw err;
+    pingWarning = err instanceof Error ? err.message : String(err);
+  }
 
   await writeAuth({
     mod8Key: trimmed,
     proxyUrl,
     ...(meta.email ? { email: meta.email } : {}),
   });
+
+  if (pingWarning) {
+    process.stderr.write(
+      `\n${chalk.yellow('!')} Your key was accepted and saved, but the test call didn't complete:\n` +
+        `  ${chalk.dim(pingWarning)}\n` +
+        chalk.dim('  That is an upstream/billing problem, not your key. Commands that\n') +
+        chalk.dim('  don\'t spend proxy credit (mod8 sync, approvals) work now.\n')
+    );
+  }
 
   process.stdout.write(
     `\n${chalk.green('✓')} Saved to ${chalk.dim(AUTH_FILE_PATH)}\n` +
@@ -136,7 +162,7 @@ async function pingProxy(proxyUrl: string, mod8Key: string): Promise<ProxyMeResp
       messages: [{ role: 'user', content: 'ok' }],
     }),
   });
-  if (resp.status === 401) throw new Error('Key not recognized by the proxy.');
+  if (resp.status === 401) throw new ProxyKeyRejected();
   if (!resp.ok) {
     const detail = await resp.text().catch(() => '');
     throw new Error(`Proxy ping failed: ${resp.status} ${detail.slice(0, 160)}`);
