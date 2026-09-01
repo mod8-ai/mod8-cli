@@ -1,0 +1,167 @@
+name: behavior — the harness stays the harness when an account runs dry
+description: |
+  Bug confirmation (2026-09-01, reported by the founder): he typed "hi" into
+  `mod8` and got a screenful of raw AI-SDK error object, a red "insufficient
+  credit" line, and a REPL that had rebranded itself to DeepSeek — prompt
+  label and all — on his first word.  He never chose that model.
+
+  Cause: commit 1e27710 (2026-08-28) added a host→own-key handoff that fired
+  on a no-credit error, printed the failure, told the user to re-send, and
+  called switchToWorkProvider() — which swaps the system prompt, the speaker
+  and the input label.  The proxy's Anthropic account had been dry since
+  08-27, so it fired on every session's first turn.  Host voice and Anthropic
+  account were the same variable (HOST_PROVIDER_ID = 'anthropic').
+
+  His rule: "the harness of mod8 should stay the harness. if we don't have
+  tokens it's ok. you switch the harness power. but the user should not feel
+  it."
+
+  Contract locked in here (no model, no network — the ladder is pure):
+    · mod8's voice is provider-agnostic: an ordered fuel ladder, brand model
+      (anthropic) first, the rest of mod8's own proxy account next, the
+      user's own keys last
+    · a tank that reports it cannot pay is remembered and demoted, so the
+      walk happens once — not on every session's first message
+    · a tank that answers is remembered and promoted to the front
+    · only account-shaped failures move the voice; a context-too-long is the
+      message's fault and would fail identically on every tank
+    · whichever tank pays, the voice is still mod8
+
+tests:
+  - name: 'ladder is brand-first, and every tank keeps the same voice'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {"mod8Key":"sk-mod8-fake_for_spec","proxyUrl":"https://proxy.example.invalid"}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json
+    shell: 'mod8 dev:host-route --reset'
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - 'last_good=none'
+        - 'dry=none'
+        - '1. providerId=anthropic model=claude-sonnet-4-6 preferred=true'
+        - 'next=anthropic/claude-sonnet-4-6'
+        - 'voice=mod8'
+
+  - name: 'a dry tank is demoted, not removed — and the next one is picked silently'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {"mod8Key":"sk-mod8-fake_for_spec","proxyUrl":"https://proxy.example.invalid"}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json
+          mod8 dev:host-route --reset >/dev/null
+    shell: 'mod8 dev:host-route --mark-dry anthropic'
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - 'dry=anthropic'
+        - '1. providerId=openai'
+        - '4. providerId=anthropic'
+        - 'voice=mod8'
+
+  - name: 'the tank that answered starts first next time'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {"mod8Key":"sk-mod8-fake_for_spec","proxyUrl":"https://proxy.example.invalid"}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json
+          mod8 dev:host-route --reset >/dev/null
+          mod8 dev:host-route --mark-dry anthropic >/dev/null
+    shell: 'mod8 dev:host-route --mark-good deepseek'
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - 'last_good=deepseek'
+        - '1. providerId=deepseek model=deepseek-chat'
+        - 'voice=mod8'
+
+  - name: 'only account failures move the voice — a too-long message does not'
+    shell: 'mod8 dev:host-route --reset'
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - 'no-credit:true'
+        - 'auth:true'
+        - 'server:true'
+        - 'context-too-long:false'
+
+  - name: 'failover walks past every dry tank in one turn'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {"mod8Key":"sk-mod8-fake_for_spec","proxyUrl":"https://proxy.example.invalid"}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json
+          mod8 dev:host-route --reset >/dev/null
+    shell: 'mod8 dev:host-route --failed anthropic,openai,google'
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - 'failed=anthropic,openai,google'
+        - 'next=deepseek/deepseek-chat'
+
+  - name: 'no keys and no login — mod8 says it has no fuel rather than pretending'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          rm -f $MOD8_CONFIG_DIR/auth.json $MOD8_CONFIG_DIR/providers.json $MOD8_CONFIG_DIR/host-fuel.json
+    shell: 'mod8 dev:host-route'
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - 'routes=0'
+        - 'voice=unfuelled'
+
+  - name: 'the brand route comes home on its own once the cooloff expires'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {"mod8Key":"sk-mod8-fake_for_spec","proxyUrl":"https://proxy.example.invalid"}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json
+          # anthropic went dry two hours ago and deepseek answered since:
+          # the cooloff has expired, so the brand model is tried again rather
+          # than the voice living on deepseek forever after one top-up.
+          node -e "
+            const fs=require('fs');
+            const p=process.env.MOD8_CONFIG_DIR+'/host-fuel.json';
+            fs.writeFileSync(p, JSON.stringify({lastGood:'deepseek',dry:{anthropic:Date.now()-2*60*60*1000}}));
+          "
+    shell: 'mod8 dev:host-route'
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - 'last_good=deepseek'
+        - 'dry=none'
+        - '1. providerId=anthropic model=claude-sonnet-4-6 preferred=true'
+        - '2. providerId=deepseek'
+
+  - name: 'inside the cooloff the dry brand route stays out of the way'
+    setup:
+      - shell: |
+          mkdir -p $MOD8_CONFIG_DIR
+          cat > $MOD8_CONFIG_DIR/auth.json <<JSON
+          {"mod8Key":"sk-mod8-fake_for_spec","proxyUrl":"https://proxy.example.invalid"}
+          JSON
+          chmod 600 $MOD8_CONFIG_DIR/auth.json
+          node -e "
+            const fs=require('fs');
+            const p=process.env.MOD8_CONFIG_DIR+'/host-fuel.json';
+            fs.writeFileSync(p, JSON.stringify({lastGood:'deepseek',dry:{anthropic:Date.now()-60*1000}}));
+          "
+    shell: 'mod8 dev:host-route'
+    expect:
+      exit_code: 0
+      stdout_contains:
+        - 'dry=anthropic'
+        - '1. providerId=deepseek'
+        - '4. providerId=anthropic'

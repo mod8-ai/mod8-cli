@@ -530,6 +530,18 @@ program
 // for a few canonical provider ids.  Pure (no network).  Used by the login
 // behavioral spec.
 program
+  .command('dev:host-route')
+  .description("print mod8's own-voice fuel ladder: which accounts it would speak through, in order (no network)")
+  .option('--failed <ids>', 'comma-separated provider ids to treat as already dry')
+  .option('--reset', 'forget which tanks were good/dry')
+  .option('--mark-dry <id>', 'record that this provider reported it cannot pay')
+  .option('--mark-good <id>', 'record that this provider answered')
+  .action(async (opts: { failed?: string; reset?: boolean; markDry?: string; markGood?: string }) => {
+    const { devHostRoute } = await import('./commands/devHostRoute.js');
+    await devHostRoute(opts);
+  });
+
+program
   .command('dev:auth-status')
   .description('print resolved auth.json + proxy routing decision (no network)')
   .action(async () => {

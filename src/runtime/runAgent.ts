@@ -25,6 +25,7 @@
  */
 
 import { streamText, stepCountIs } from 'ai';
+import { logCrashSync } from '../storage/crashLog.js';
 
 type StreamTextOpts = Parameters<typeof streamText>[0];
 
@@ -96,6 +97,21 @@ export async function* runAgent(
       messages: sdkMessages,
       tools: opts.tools,
       stopWhen: stepCountIs(maxSteps),
+      // The AI SDK's DEFAULT onError is console.error(error) — it dumps the
+      // entire APICallError (headers, responseBody, Symbol keys) straight to
+      // stderr, underneath Ink, bypassing every bit of mod8's error handling.
+      // That is the wall of JSON a user saw before a one-line "insufficient
+      // credit" message.  The error still surfaces properly: it comes back
+      // through result.fullStream / the await below and is diagnosed by
+      // explainError.  So here we only record it.
+      onError: ({ error }) => {
+        logCrashSync({
+          ts: Date.now(),
+          kind: 'manual',
+          message: `streamText: ${toError(error).message}`,
+          stack: toError(error).stack,
+        });
+      },
       ...(opts.signal ? { abortSignal: opts.signal } : {}),
     });
   } catch (err) {

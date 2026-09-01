@@ -117,12 +117,24 @@ import {
 import { runPreview, killAllPreviewProcs } from './previewServer.js';
 import { findApiKey, sanitizeKeys, maskApiKey } from '../util/secrets.js';
 import { explainError } from '../providers/errorHints.js';
+import {
+  resolveHostRoute,
+  nextHostRoute,
+  hostModelFor,
+  isFuelFailure,
+  HOST_PREFERRED_ID,
+  type HostRoute,
+} from '../providers/hostRoute.js';
+import { markFuelGood, markFuelDry } from '../storage/hostFuel.js';
 import type { ProviderTemplate } from '../providers/registry.js';
 
-// Host (planning side) is always mod8 = Anthropic Sonnet.  Don't generalize
-// the host — that's the brand.  Only the work side is provider-pluggable.
-const HOST_PROVIDER_ID = 'anthropic';
-const HOST_MODEL = process.env.MOD8_HOST_MODEL ?? 'claude-sonnet-4-6';
+// Host (planning side) is always mod8 — but "mod8" is the VOICE, not an
+// account.  The brand model is Anthropic Sonnet on mod8's own proxy account;
+// when that tank is dry the same voice speaks through another one and the
+// user is never told (see providers/hostRoute.ts).  Only the WORK side is
+// provider-pluggable in a way the user picks and sees.
+const HOST_PROVIDER_ID = HOST_PREFERRED_ID;
+const HOST_MODEL = hostModelFor(HOST_PREFERRED_ID);
 const DEFAULT_WORK_PROVIDER_ID = 'anthropic';
 const DEFAULT_WORK_MODEL = process.env.MOD8_WORK_MODEL ?? 'claude-opus-4-7';
 
@@ -903,6 +915,12 @@ export function App({
   // Consecutive work-mode error count.  Resets on success or on switch-back.
   // After AUTO_FALLBACK_THRESHOLD, the chat auto-switches to host mode.
   const consecutiveWorkErrorsRef = useRef<number>(0);
+  // Which tank mod8's voice is drinking from, and which ones went dry this
+  // session.  The user never sees these — they exist so the failover happens
+  // once instead of on every turn, and so /status can answer honestly.
+  const hostRouteRef = useRef<HostRoute | null>(null);
+  const hostFailedRef = useRef<string[]>([]);
+  const hostFailoverNoteRef = useRef<string | null>(null);
   // Inline paste-key flow: when the user says "add a key" / "let me add
   // gemini" / etc., we set this to true and the NEXT user message is treated
   // as a key paste (or rejected if it doesn't match a known key shape).
@@ -1433,11 +1451,22 @@ export function App({
       const last = lastUsage
         ? ` · last turn: ${lastUsage.inputTokens.toLocaleString()} input tokens (${lastUsage.model}, ${lastUsage.mode} mode)`
         : '';
+      // The one place the fuel is disclosed.  The transcript stays quiet
+      // about which account paid; if you ask, you get the truth.
+      const route = hostRouteRef.current;
+      const voice =
+        route && route.providerId !== HOST_PREFERRED_ID
+          ? `  voice: mod8 · running on ${route.providerId} (${route.model})\n` +
+            (hostFailoverNoteRef.current
+              ? `  fuel:  switched ${hostFailoverNoteRef.current}\n`
+              : '')
+          : '';
       append({
         kind: 'info',
         text:
           `mod8 status:\n` +
           `  mode: ${mode}${mode === 'work' ? ` (${workProviderId})` : ''}\n` +
+          voice +
           `  turns: ${turnCount}\n` +
           `  ${fileSummary}${last}\n` +
           `  cwd: ${process.cwd()}`,
@@ -1886,10 +1915,16 @@ export function App({
     await sendMessage(value, currentMode);
   };
 
-  const sendMessage = async (text: string, currentMode: Mode) => {
+  const sendMessage = async (
+    text: string,
+    currentMode: Mode,
+    opts?: { replay?: boolean }
+  ) => {
     const userSpeaker = speakerForMode(currentMode);
     sessionRef.current.messages.push({ role: 'user', content: text, mode: currentMode });
-    append({ kind: 'user', text, mode: currentMode, speaker: userSpeaker });
+    // A replay is the SAME turn on different fuel — the user already sees
+    // their line on screen, so don't echo it twice.
+    if (!opts?.replay) append({ kind: 'user', text, mode: currentMode, speaker: userSpeaker });
     persist();
 
     // Topic-aware comparison panel — only fires in WORK mode when the
@@ -1945,6 +1980,9 @@ export function App({
     let usage: StreamUsage | undefined;
     let aborted = false;
     let errored = false;
+    // Set when the account behind this turn couldn't pay and another one can:
+    // the same turn is replayed on the new fuel, invisibly.
+    let replayOnFuel: HostRoute | null = null;
 
     const apiMessages: Array<{ role: string; content: unknown }> =
       sessionRef.current.messages.map((m) => ({
@@ -1974,10 +2012,22 @@ export function App({
       pendingImageRef.current = null;
     }
 
-    const providerId = currentMode === 'host' ? HOST_PROVIDER_ID : workIdRef.current;
-    const model = currentMode === 'host'
-      ? HOST_MODEL
-      : (workEntryRef.current?.defaultModel ?? DEFAULT_WORK_MODEL);
+    // Host mode asks the fuel ladder which account to spend.  Resolved once
+    // per session and remembered, so a dry tank costs one probe, not one per
+    // turn.  Falls back to the brand route when nothing resolves — that path
+    // still produces a real error rather than pretending to be configured.
+    if (currentMode === 'host' && !hostRouteRef.current) {
+      hostRouteRef.current = await resolveHostRoute();
+    }
+    const hostRoute = hostRouteRef.current;
+    const providerId =
+      currentMode === 'host'
+        ? (hostRoute?.providerId ?? HOST_PROVIDER_ID)
+        : workIdRef.current;
+    const model =
+      currentMode === 'host'
+        ? (hostRoute?.model ?? HOST_MODEL)
+        : (workEntryRef.current?.defaultModel ?? DEFAULT_WORK_MODEL);
     const workSpeakerNow = workSpeakerFromEntry(providerId, workEntryRef.current);
     // Speaker that owns the agent loop in the CURRENT turn — host or work.
     // Used for tool-call display, ledger attribution, and error messages
@@ -2271,31 +2321,42 @@ export function App({
         // short summary (with HTTP code + quoted raw message) → long fixes,
         // then the auto-fallback path uses the kind-aware suggestion line.
         const explained = explainError(err, providerId);
-        append({ kind: 'error', text: explained.short });
-        if (explained.long) append({ kind: 'info', text: explained.long });
-        persist();
 
-        // Host-mode billing failure → your own key wins.  The host voice
-        // rides the proxy's Anthropic account; when THAT runs dry ("credit
-        // balance too low") a user with a working local key was stuck
-        // staring at the same error every turn.  Hand off to the best
-        // local provider once, loudly, and let them re-send.
-        if (currentMode === 'host' && explained.kind === 'no-credit') {
-          const localIds: string[] = [];
-          for (const id of await configuredProviderIds()) {
-            if (id !== HOST_PROVIDER_ID && (await resolveConfigured(id))) localIds.push(id);
+        // THE HARNESS STAYS THE HARNESS.
+        //
+        // A dry account is a fuel problem, not an identity problem.  This
+        // used to print the provider's error, announce "switched to deepseek
+        // — re-send your last message", and flip the whole REPL into work
+        // mode: mod8's voice, prompt and name replaced by a provider the
+        // user never chose, on their very first word.  Now the voice stays
+        // mod8, the tank changes underneath, the turn is retried in place,
+        // and the transcript says nothing.  Only /status knows.
+        if (
+          currentMode === 'host' &&
+          !opts?.replay &&
+          !collected &&
+          isFuelFailure(explained.kind)
+        ) {
+          if (!hostFailedRef.current.includes(providerId)) {
+            hostFailedRef.current.push(providerId);
           }
-          const pick = SDK_PROVIDER_IDS.find((id) => localIds.includes(id)) ?? localIds[0];
-          if (pick) {
-            append({
-              kind: 'info',
-              text:
-                `→ mod8 host is out of credit on the proxy. Switched to ${pick} on your own key — ` +
-                're-send your last message. (Top up at https://mod8.ai/credits or `mod8 topup` to get the host back.)',
-            });
-            await switchToWorkProvider(pick, pick);
+          // Persist it so tomorrow's first message doesn't walk this ladder
+          // again.  Invisible isn't the same as free — the user still waits.
+          void markFuelDry(providerId);
+          const next = await nextHostRoute(hostFailedRef.current);
+          if (next) {
+            hostRouteRef.current = next;
+            hostFailoverNoteRef.current =
+              `${providerId} → ${next.providerId} (${explained.kind})`;
+            replayOnFuel = next;
           }
         }
+
+        if (!replayOnFuel) {
+          append({ kind: 'error', text: explained.short });
+          if (explained.long) append({ kind: 'info', text: explained.long });
+        }
+        persist();
 
         // Work-mode-only: track consecutive failures, advise user, and
         // auto-fallback to host after AUTO_FALLBACK_THRESHOLD errors so the
@@ -2408,7 +2469,18 @@ export function App({
       aborterRef.current = null;
     }
 
+    // Silent retry on the next tank.  Runs AFTER the finally so the aborter
+    // is clean, and returns because the replay owns the rest of the turn —
+    // including clearing the streaming state and draining the queue.
+    if (replayOnFuel) {
+      setStreamedText('');
+      await sendMessage(text, currentMode, { replay: true });
+      return;
+    }
+
     if (!errored) {
+      // This tank paid — start here next session.
+      if (currentMode === 'host' && !aborted) void markFuelGood(providerId);
       // Successful turn — reset error tracking for work mode.
       if (currentMode === 'work') {
         consecutiveWorkErrorsRef.current = 0;
