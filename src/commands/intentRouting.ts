@@ -545,6 +545,16 @@ export function isHelpCommand(input: string): boolean {
   return /^\s*\/(help|\?|commands)\s*$/i.test(input);
 }
 
+/** True when the input is exactly the `/mode` command (no args).  Prints
+ *  mod8's TWO real run-states (host versus work) and the current provider,
+ *  so a user hunting for an "auto/manual" toggle gets the actual model.
+ *  mod8 deliberately has no "auto/manual/other mode" settings — the closest
+ *  idea ("let the loop run on its own") is the L1–L5 loop autonomy you set
+ *  in a product's policy.yaml, which is separate from this chat REPL. */
+export function isModeCommand(input: string): boolean {
+  return /^\s*\/mode\s*$/i.test(input);
+}
+
 /** True when the input is exactly the `/why` command (no args).  Prints
  *  the last N routing decisions with reasons — the user-facing proof
  *  that mod8's "smart routing" is actually doing something. */

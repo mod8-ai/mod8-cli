@@ -87,6 +87,7 @@ import {
   GOAL_CLEAR_SENTINEL,
   isCostCommand,
   isHelpCommand,
+  isModeCommand,
   isWhyCommand,
   isDiagnoseCommand,
   isBalanceCommand,
@@ -424,11 +425,58 @@ function Welcome() {
       </Box>
       <Text dimColor>{`  switch to claude:  ask naturally — "go", "let's work", "let me talk to claude"`}</Text>
       <Text dimColor>{`  use any provider:  "use deepseek", "ask grok", "switch to mistral"`}</Text>
-      <Text dimColor>{`  side-by-side:      "compare all" or /compare`}</Text>
-      <Text dimColor>{`  list providers:    /providers      ·  back to mod8: /mod8 or @mod8`}</Text>
+      <Text dimColor>{`  side-by-side:      "compare all" or /compare        ·  pick a tool: /providers`}</Text>
+      <Text dimColor>{`  back to mod8:      /mod8 or @mod8                       ·  set the plan: /goal <text>`}</Text>
       <Text dimColor>{`  clear history:     /clear          ·  quit: /exit · cancel: esc`}</Text>
+      <Text dimColor>{`  type /help any time for the full command list — /status sees what's built`}</Text>
     </Box>
   );
+}
+
+/** Grouped /help output.  Logical sections instead of one ~30-line wall so
+ *  it's scannable at a glance — the previous flat list buried powerful
+ *  commands (files, status, goal, sync) under a long run of unrelated rows. */
+function renderHelpBlock(): string {
+  const lines: string[] = ['mod8 commands:'];
+  const section = (title: string) => lines.push(`\n${title}`);
+  const item = (cmd: string, desc: string) => lines.push(`  ${cmd}  ${desc}`);
+
+  section('workflow');
+  item('/help', '— this list');
+  item('/mode', 'which voice is armed — host (planning, read-only) vs work (claude worker)');
+  item('/goal <text>', 'set a persistent goal injected into every provider');
+  item('/goal clear', 'clear the current goal');
+  item('/status', 'what is the current mode + what has been built (evidence, no LLM)');
+  item('/files', 'files written this session (with provider tags)');
+  item('/preview [<script>]', "auto-launch the project's dev server + open the browser");
+  item('/clear', 'wipe transcript + ledger + kill preview servers');
+  item('/exit', 'leave');
+
+  section('providers & routing');
+  item('/providers', 'list configured providers + keys');
+  item('/why', 'recent routing decisions + why mod8 picked them');
+  item('/balance', 'proxy credit balance (requires mod8 login)');
+  item('/topup [<amount>]', 'buy mod8 credits via Stripe (default $50)');
+  item('"use <provider>"', 'route to a provider ("use deepseek", "ask grok")');
+  item('"back to host"', 'return from work mode to mod8 ("/mod8" or "@mod8" too)');
+  item('"compare all: <prompt>"', 'run the same prompt on every provider, side-by-side');
+
+  section('company brain (your products)');
+  item('/projects', 'connected projects: last tick, cards waiting for you');
+  item('/approvals [<slug>]', 'review pending cards for a project');
+  item('/approve <apr_id>', 'approve a card (merges / publishes via the act phase)');
+  item('/reject <apr_id>', 'reject a card');
+  item('/rule <slug>: <text>', "add a plain-English rule to that project's charter");
+  item('/marketing <slug>', 'plan / channels / posts waiting (plan|status|answer)');
+  item('/receipt', 'Friday receipt: what the Harness did, what needs you');
+  item('/sync [<slug>]', 'push projects + cards to the mod8 web dashboard');
+  item('/halt', 'freeze the self-improvement loop (writes STOP file)');
+
+  section('troubleshooting & diagnostics');
+  item('/cost', 'last-turn tokens + dashboard link');
+  item('/diagnose', 'versions, OS, auth status, last crashes (for support)');
+
+  return lines.join('\n');
 }
 
 function SpeakerBlock({
@@ -738,11 +786,21 @@ function InputBox({
   );
 }
 
-function StatusLine({ speaker, errorTag }: { speaker: Speaker; errorTag?: string | null }) {
+function StatusLine({
+  speaker,
+  errorTag,
+  modeLabel,
+}: {
+  speaker: Speaker;
+  errorTag?: string | null;
+  /** Short run-state tag, e.g. "host · read-only" or "work · claude". */
+  modeLabel: string;
+}) {
   return (
     <Box paddingX={1}>
       <Text color={speaker.color} bold>{`${speaker.icon} ${speaker.name}`}</Text>
-      {errorTag && <Text color="red">{` (${errorTag})`}</Text>}
+      <Text dimColor>{` · ${modeLabel}`}</Text>
+      {errorTag && <Text color="red">{` · ${errorTag}`}</Text>}
       <Text dimColor>{` · esc to interrupt · /exit to quit`}</Text>
     </Box>
   );
@@ -1474,36 +1532,36 @@ export function App({
       return;
     }
 
-    if (isHelpCommand(value)) {
+    if (isModeCommand(value)) {
+      const workName = speakerForMode('work').name;
+      const runState =
+        mode === 'host'
+          ? [
+              'You are in HOST mode — mod8\'s own planning voice (read-only tools: read/list/grep).',
+              '  Ask naturally to hand off:  "go", "let\'s work", "switch to claude".',
+            ]
+          : [
+              `You are in WORK mode — the ${workName} worker (full tool kit: edit/write/bash).`,
+              '  Return to mod8 host any time:  "mod8", "/mod8", "@mod8", or "back".',
+            ];
       append({
         kind: 'info',
         text:
-          'mod8 commands:\n' +
-          '  /help                  — this list\n' +
-          '  /goal <text>           — set a persistent goal injected into every provider\n' +
-          '  /goal clear            — clear the current goal\n' +
-          '  /providers             — list configured providers + keys\n' +
-          '  /status                — current mode, turn count, last-turn tokens\n' +
-          '  /files                 — files written this session (with provider tags)\n' +
-          '  /cost                  — last-turn tokens + dashboard link\n' +
-          '  /balance               — proxy credit balance (requires mod8 login)\n' +
-          '  /topup [<amount>]      — buy mod8 credits via Stripe (default $50)\n' +
-          '  /why                   — recent routing decisions + why mod8 picked them\n' +
-          '  /diagnose              — versions, OS, auth status, last crashes (for support)\n' +
-          '  /projects              — your connected projects: last tick, cards waiting for you\n' +
-          '  /approvals [<slug>]    — review pending cards for a project (default mod8)\n' +
-          '  /approve <apr_id>      — approve a card (merges / publishes via the act phase)\n' +
-          '  /reject <apr_id>       — reject a card\n' +
-          '  /rule <slug>: <text>   — add a plain-English rule to that project\'s charter\n' +
-          '  /marketing <slug>      — marketing role: plan, channels, posts waiting (/marketing plan <slug> drafts this week\'s posts as cards; /marketing answer <slug> <n> <text> answers question #n)\n' +
-          '  /receipt               — Friday receipt: what the Harness did this week, what needs you\n' +
-          '  /sync [<slug>]         — push projects + cards to the mod8 web dashboard, apply decisions made there\n' +
-          '  /halt                  — freeze the self-improvement loop (writes STOP file)\n' +
-          '  /preview [<script>]    — auto-launch the project\'s dev server + open the browser\n' +
-          '  /clear                 — wipe transcript + ledger + kill preview servers\n' +
-          '  /exit                  — leave\n' +
-          '\nrouting hints (just type them):\n' +
-          '  "use claude" / "use deepseek" / "back to host" / "compare all: <prompt>"',
+          `mod8 run state:\n` +
+          `  voice: ${mode}${mode === 'work' ? ` · agent: ${workName}` : ''}\n` +
+          runState.join('\n') +
+          '\n' +
+          `  ✱ mod8 has no "auto/manual/other" mode setting. These two voices (host ↔ work) are the only run states.` +
+          `\n  ✱ the closest thing to "let it run on its own" is the loop's L1–L5 autonomy — set in a product's policy.yaml, not here.` +
+          `\n  details: /status · full commands: /help`,
+      });
+      return;
+    }
+
+    if (isHelpCommand(value)) {
+      append({
+        kind: 'info',
+        text: renderHelpBlock(),
       });
       return;
     }
@@ -2698,6 +2756,14 @@ export function App({
   ];
 
   const inputSpeaker = mode === 'host' ? HOST_SPEAKER : workSpeakerFromEntry(workProviderId, workEntry);
+  // Persistent run-state tag for the footer so the user always knows which
+  // of mod8's two voices is armed — resolve the provider label from the
+  // current work entry, falling back to the active provider id.
+  const workModelLabel =
+    workEntry?.name
+      ? workerNameFor(workProviderId, workEntry.name)
+      : workProviderId;
+  const modeLabel = mode === 'host' ? `host · ${HOST_MODEL}` : `work · ${workModelLabel} · ${(workEntry?.defaultModel ?? DEFAULT_WORK_MODEL)}`;
 
   return (
     <Box flexDirection="column">
@@ -2746,8 +2812,8 @@ export function App({
 
       {queuedMessages.length > 0 && (
         <Box paddingX={1} flexDirection="column">
-          <Text dimColor>
-            {`  ↓  ${queuedMessages.length} queued — will send when current turn finishes:`}
+          <Text color={inputSpeaker.color} bold>
+            {`  ↓  ${queuedMessages.length} queued — will send when current turn finishes.`}
           </Text>
           {queuedMessages.map((msg, i) => {
             // Truncate long messages so they don't blow up the layout.
@@ -2765,6 +2831,7 @@ export function App({
       <StatusLine
         speaker={inputSpeaker}
         errorTag={mode === 'work' ? lastWorkError : null}
+        modeLabel={modeLabel}
       />
 
       {lastUsage && <ContextBar usage={lastUsage} />}
