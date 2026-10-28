@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
-    "test": "node test/sessions.test.mjs && node test/session-flow.test.mjs && node test/meta-ig.test.mjs",
+    "test": "node test/sessions.test.mjs && node test/session-flow.test.mjs && node test/meta-ig.test.mjs && node test/social-draft.test.mjs",
     "verify": "node ./bin/mod8.js verify",
     "prepublishOnly": "npm run build"
   },

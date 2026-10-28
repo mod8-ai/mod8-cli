@@ -411,6 +411,39 @@ loop
   });
 
 program
+  .command('social <sub> [args...]')
+  .description('Instagram posts by hand: `draft <files...> --as reel|story|photo|carousel --caption <text>` hosts the media and stages a card for approval (nothing posts until you approve it in `mod8 approvals`); `list` shows waiting drafts')
+  .requiredOption('-s, --slug <slug>', 'brand / product slug (e.g. safer)')
+  .option('--as <format>', 'reel | story | photo | carousel', 'reel')
+  .option('--caption <text>', 'post caption')
+  .option('--caption-file <path>', 'read the caption from a file')
+  .action(async (sub: string, args: string[], o: { slug: string; as: string; caption?: string; captionFile?: string }) => {
+    const social = await import('./company/social.js');
+    if (sub === 'list') {
+      const items = await social.listDrafts(o.slug);
+      if (items.length === 0) { process.stdout.write('no Instagram drafts waiting\n'); return; }
+      for (const it of items) process.stdout.write(`${it.id}  ${it.title}\n`);
+      return;
+    }
+    if (sub !== 'draft') {
+      process.stderr.write("mod8 social: sub-command must be 'draft' or 'list'\n");
+      process.exit(2);
+    }
+    try {
+      const { readFileSync } = await import('node:fs');
+      const caption = o.captionFile ? readFileSync(o.captionFile, 'utf8') : (o.caption ?? '');
+      const r = await social.draftPost({ slug: o.slug, files: args, format: o.as as never, caption });
+      if (r.shrunk.length) process.stdout.write(`shrunk to fit hosting: ${r.shrunk.join(', ')}\n`);
+      process.stdout.write(`hosted: ${r.media.map((m) => m.source).join(' ')}\n`);
+      process.stdout.write(`draft card ${r.approvalId} is waiting. Nothing is posted.\n`);
+      process.stdout.write(`approve: mod8 approvals --slug ${o.slug}   (or: mod8 approvals-cli decide ${r.approvalId} approve -s ${o.slug})\n`);
+    } catch (err) {
+      process.stderr.write(`mod8 social draft: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    }
+  });
+
+program
   .command('approvals')
   .description('Review pending loop approvals (full-screen Ink panel — same as /approvals in chat)')
   .option('--slug <slug>', 'product slug (default: mod8)')

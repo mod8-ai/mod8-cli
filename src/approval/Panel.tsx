@@ -219,6 +219,9 @@ function ExpandedView({ item }: { item: ApprovalItem }): React.ReactElement {
         {a.type === 'social-post' && (
           <Text>channel={a.channel}{a.inReplyTo ? ` (in reply to ${a.inReplyTo})` : ''}: {a.text}</Text>
         )}
+        {a.type === 'social-post' && (a.media ?? []).map((m, i) => (
+          <Text key={i} dimColor>{`  ${m.kind}: ${m.source}`}</Text>
+        ))}
       </Box>
       <Box marginTop={1}>
         <Text bold>rollback: </Text>

@@ -192,6 +192,33 @@ export async function publish(opts: PublishOptions): Promise<void> {
   }
 }
 
+/** Programmatic publish of one folder to `<slug>.apps.mod8.ai` — used by
+ *  mod8 Social to host post media at a public URL Instagram can fetch.
+ *  Same limits + upload path as `mod8 publish --confirm`; throws on failure. */
+export async function publishFolder(input: { dir: string; slug: string; projectName: string }): Promise<{ url: string }> {
+  const slug = validateSlug(input.slug);
+  const info = { projectName: input.projectName, projectId: `folder-${slug}` } as Awaited<ReturnType<typeof getProjectInfo>>;
+  const plan = await buildPlan({ slug, outputDir: resolve(input.dir), info });
+  const auth = await readAuth();
+  if (!auth) throw new Error('not logged in to mod8 (run `mod8 login`)');
+  const tarPath = await createTarball(plan);
+  try {
+    const result = await uploadTarball({
+      tarPath,
+      proxyUrl: process.env['MOD8_SITES_URL'] ?? 'https://mod8-sites-1093407296867.us-central1.run.app',
+      bearer: auth.mod8Key,
+      slug: plan.slug,
+      projectId: plan.projectId,
+      projectName: plan.projectName,
+      totalBytes: plan.totalBytes,
+      fileCount: plan.files.length,
+    });
+    return { url: result.url };
+  } finally {
+    await fs.unlink(tarPath).catch(() => {});
+  }
+}
+
 /** Convert a free-form project name into a DNS-safe slug.  Throws on
  *  reserved or too-short slugs so the user fails fast (not after a
  *  long upload). */
