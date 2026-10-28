@@ -238,13 +238,16 @@ export async function connectAddAdapter(slug: string, adapterId: string): Promis
       creds.propertyId = await ask('property id (e.g. properties/123456): ');
       creds.authType = 'oauth';
     } else if (adapterId === 'meta') {
-      // Matches MetaCreds in loop/adapters/meta.ts: {authType:'oauth', accessToken, pageId, igUserId?}.
+      // Matches MetaCreds in loop/adapters/meta.ts: {authType:'oauth', igAccessToken? | accessToken+pageId, igUserId?}.
       process.stdout.write(chalk.dim('Facebook Page + Instagram (Meta Graph API). Get a long-lived PAGE access token for your Page\n' +
         '(Meta Business Suite → or Graph API Explorer with pages_manage_posts + instagram_content_publish).\n\n'));
-      creds.accessToken = await ask('Page access token: ');
-      creds.pageId = await ask('Facebook Page id: ');
-      creds.pageName = await ask('Page name (display only, optional): ');
-      creds.igUserId = await ask('Instagram business account id (optional — needed for Instagram posts): ');
+      creds.igAccessToken = await ask('Instagram-Login token (mod8 Social-IG app; blank to use a Facebook Page instead): ');
+      if (!creds.igAccessToken) {
+        creds.accessToken = await ask('Page access token: ');
+        creds.pageId = await ask('Facebook Page id: ');
+        creds.pageName = await ask('Page name (display only, optional): ');
+      }
+      creds.igUserId = await ask('Instagram account id (optional — needed for Instagram posts via a Page): ');
       creds.authType = 'oauth';
     } else if (adapterId === 'stripe') {
       creds.token = await ask('Stripe restricted API key (read scopes): ');
